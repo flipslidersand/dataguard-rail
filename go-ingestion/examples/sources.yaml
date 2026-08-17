@@ -6,7 +6,7 @@ sources:
     path: ./data/products.csv
     schedule: "0 * * * *" # Phase 3 では未使用 (将来のスケジューラ用)
 
-  # PostgreSQL ソースは #10 で対応予定
+  # PostgreSQL ソース (pgx で接続しクエリ結果を取込む)
   # - name: orders
   #   type: postgres
   #   dsn: "postgres://user:pass@localhost/shop"

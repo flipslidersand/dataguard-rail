@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -70,7 +71,7 @@ func runIngest(configPath, rulesPath, dbPath, engineBin, tmpDir string) error {
 
 	runner := engine.New(engineBin)
 
-	results, err := pipeline.Run(cfg, rulesPath, td, runner, st, log)
+	results, err := pipeline.Run(context.Background(), cfg, rulesPath, td, pipeline.DefaultLoader{}, runner, st, log)
 	if err != nil {
 		return err
 	}
