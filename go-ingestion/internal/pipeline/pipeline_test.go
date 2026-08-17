@@ -1,12 +1,14 @@
 package pipeline
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/flipslidersand/dataguard-rail/internal/config"
 	"github.com/flipslidersand/dataguard-rail/internal/engine"
+	"github.com/flipslidersand/dataguard-rail/internal/ingester"
 )
 
 // fakeChecker は与えられた CSV パスの存在を確認し、固定の violation を返す。
@@ -27,6 +29,13 @@ func (f *fakeSaver) SaveViolations(vs []engine.Violation) error {
 	return nil
 }
 
+// fakeLoader は DB 無しで postgres 経路を検証するためのローダ。
+type fakeLoader struct{ ds *ingester.Dataset }
+
+func (f fakeLoader) Load(_ context.Context, _ config.DataSource) (*ingester.Dataset, error) {
+	return f.ds, nil
+}
+
 func TestRunCSVSource(t *testing.T) {
 	dir := t.TempDir()
 	csvPath := filepath.Join(dir, "products.csv")
@@ -40,7 +49,8 @@ func TestRunCSVSource(t *testing.T) {
 	chk := &fakeChecker{}
 	saver := &fakeSaver{}
 
-	results, err := Run(cfg, "rules.yaml", dir, chk, saver, nil)
+	// loader=nil → DefaultLoader (実 CSV 読込み)
+	results, err := Run(context.Background(), cfg, "rules.yaml", dir, nil, chk, saver, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -56,15 +66,25 @@ func TestRunCSVSource(t *testing.T) {
 	}
 }
 
-func TestRunSkipsPostgres(t *testing.T) {
+func TestRunPostgresSource(t *testing.T) {
 	cfg := &config.Config{Sources: []config.DataSource{
-		{Name: "db", Type: config.Postgres, DSN: "x", Query: "y"},
+		{Name: "orders", Type: config.Postgres, DSN: "x", Query: "SELECT 1"},
 	}}
-	results, err := Run(cfg, "rules.yaml", t.TempDir(), &fakeChecker{}, &fakeSaver{}, nil)
+	loader := fakeLoader{ds: &ingester.Dataset{
+		Headers: []string{"id", "price"},
+		Rows:    [][]string{{"1", "-1"}, {"2", "5"}},
+	}}
+	chk := &fakeChecker{}
+	saver := &fakeSaver{}
+
+	results, err := Run(context.Background(), cfg, "rules.yaml", t.TempDir(), loader, chk, saver, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if len(results) != 1 || !results[0].Skipped {
-		t.Errorf("postgres source should be skipped: %+v", results)
+	if len(results) != 1 || results[0].Violations != 1 {
+		t.Errorf("postgres source should flow to checker: %+v", results)
+	}
+	if len(saver.saved) != 1 {
+		t.Errorf("want 1 saved violation, got %d", len(saver.saved))
 	}
 }

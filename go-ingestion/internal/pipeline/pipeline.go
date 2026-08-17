@@ -3,6 +3,7 @@
 package pipeline
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/flipslidersand/dataguard-rail/internal/config"
@@ -21,6 +22,27 @@ type Saver interface {
 	SaveViolations([]engine.Violation) error
 }
 
+// Loader は DataSource を Dataset に読み込む。DB 接続を伴う postgres を
+// テストで差し替えられるよう interface 化している。
+type Loader interface {
+	Load(ctx context.Context, src config.DataSource) (*ingester.Dataset, error)
+}
+
+// DefaultLoader は type に応じて CSV / PostgreSQL を読み込む本番用ローダ。
+type DefaultLoader struct{}
+
+// Load は src.Type に応じて Dataset を返す。
+func (DefaultLoader) Load(ctx context.Context, src config.DataSource) (*ingester.Dataset, error) {
+	switch src.Type {
+	case config.CSV:
+		return ingester.LoadCSV(src.Path)
+	case config.Postgres:
+		return ingester.LoadPostgres(ctx, src.DSN, src.Query)
+	default:
+		return nil, fmt.Errorf("未対応の source type %q", src.Type)
+	}
+}
+
 // Result はソースごとの取込み結果。
 type Result struct {
 	Source     string
@@ -30,33 +52,29 @@ type Result struct {
 }
 
 // Run は全 DataSource を順に処理し、ソースごとの結果を返す。
-// CSV ソースを処理し、PostgreSQL は #10 実装までスキップする。
-func Run(cfg *config.Config, rulesPath, tmpDir string, chk Checker, saver Saver, log *zap.Logger) ([]Result, error) {
+func Run(ctx context.Context, cfg *config.Config, rulesPath, tmpDir string, loader Loader, chk Checker, saver Saver, log *zap.Logger) ([]Result, error) {
 	if log == nil {
 		log = zap.NewNop()
+	}
+	if loader == nil {
+		loader = DefaultLoader{}
 	}
 	results := make([]Result, 0, len(cfg.Sources))
 
 	for _, src := range cfg.Sources {
-		if src.Type != config.CSV {
-			log.Warn("skip non-csv source (未実装)", zap.String("source", src.Name), zap.String("type", string(src.Type)))
-			results = append(results, Result{Source: src.Name, Skipped: true, Reason: "postgres は #10 で対応"})
-			continue
-		}
-
-		n, err := processCSV(src, rulesPath, tmpDir, chk, saver)
+		n, err := process(ctx, src, rulesPath, tmpDir, loader, chk, saver)
 		if err != nil {
 			return results, fmt.Errorf("source %q: %w", src.Name, err)
 		}
-		log.Info("ingested", zap.String("source", src.Name), zap.Int("violations", n))
+		log.Info("ingested", zap.String("source", src.Name), zap.String("type", string(src.Type)), zap.Int("violations", n))
 		results = append(results, Result{Source: src.Name, Violations: n})
 	}
 	return results, nil
 }
 
-// processCSV は 1 つの CSV ソースを取込み、チェックし、保存して violation 数を返す。
-func processCSV(src config.DataSource, rulesPath, tmpDir string, chk Checker, saver Saver) (int, error) {
-	ds, err := ingester.LoadCSV(src.Path)
+// process は 1 ソースを読み込み→一時 CSV→チェック→保存し violation 数を返す。
+func process(ctx context.Context, src config.DataSource, rulesPath, tmpDir string, loader Loader, chk Checker, saver Saver) (int, error) {
+	ds, err := loader.Load(ctx, src)
 	if err != nil {
 		return 0, err
 	}
