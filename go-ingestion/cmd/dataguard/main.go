@@ -9,6 +9,7 @@ import (
 	"github.com/flipslidersand/dataguard-rail/internal/engine"
 	"github.com/flipslidersand/dataguard-rail/internal/ingester"
 	"github.com/flipslidersand/dataguard-rail/internal/pipeline"
+	"github.com/flipslidersand/dataguard-rail/internal/server"
 	"github.com/flipslidersand/dataguard-rail/internal/store"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -90,12 +91,38 @@ func runIngest(configPath, rulesPath, dbPath, engineBin, tmpDir string) error {
 }
 
 func newServeCmd() *cobra.Command {
-	return &cobra.Command{
+	var (
+		addr      string
+		dbPath    string
+		engineBin string
+	)
+	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Start REST API server (Phase 4)",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			fmt.Println("serve — not yet implemented (Phase 4)")
-			return nil
+			return runServe(addr, dbPath, engineBin)
 		},
 	}
+	f := cmd.Flags()
+	f.StringVar(&addr, "addr", ":8080", "リッスンアドレス")
+	f.StringVar(&dbPath, "db", "data/violations", "BadgerDB のパス")
+	f.StringVar(&engineBin, "engine-bin", engine.DefaultBin, "dataguard-engine バイナリのパス")
+	return cmd
+}
+
+func runServe(addr, dbPath, engineBin string) error {
+	log, _ := zap.NewProduction()
+	defer func() { _ = log.Sync() }()
+
+	st, err := store.Open(dbPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	runner := engine.New(engineBin)
+	srv := server.New(st, runner)
+
+	log.Info("starting server", zap.String("addr", addr))
+	return srv.Run(addr)
 }
