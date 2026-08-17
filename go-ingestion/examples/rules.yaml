@@ -1,0 +1,14 @@
+# DataGuard Rail — 品質ルールの例 (Rust engine の check が評価する)
+rules:
+  - name: positive_price
+    column: sale_price
+    expression: value > 0
+
+  - name: no_null_email
+    column: email
+    expression: not_null
+
+  - name: no_duplicate_stock
+    key: stock_id
+    window: 24h # 時間窓は MVP 未対応 (ファイル全体で重複判定)
+    expression: count <= 1

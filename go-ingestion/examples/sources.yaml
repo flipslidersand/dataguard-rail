@@ -1,0 +1,14 @@
+# DataGuard Rail — データソース定義の例
+# dataguard ingest --config sources.yaml --rules rules.yaml
+sources:
+  - name: products
+    type: csv
+    path: ./data/products.csv
+    schedule: "0 * * * *" # Phase 3 では未使用 (将来のスケジューラ用)
+
+  # PostgreSQL ソースは #10 で対応予定
+  # - name: orders
+  #   type: postgres
+  #   dsn: "postgres://user:pass@localhost/shop"
+  #   query: "SELECT * FROM orders WHERE updated_at > now() - interval '1 day'"
+  #   schedule: "*/5 * * * *"
