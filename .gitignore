@@ -1,0 +1,33 @@
+# Rust
+/rust-engine/target/
+**/*.rs.bk
+
+# Go
+/go-ingestion/bin/
+/go-ingestion/dataguard
+*.exe
+*.test
+*.out
+
+# BadgerDB / local data
+/data/
+*.db
+
+# Engine artifacts
+lineage.json
+violations.json
+
+# Env / secrets
+.env
+.env.*
+*.pem
+secrets/
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Claude
+.claude/
