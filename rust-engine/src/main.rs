@@ -1,3 +1,4 @@
+mod check;
 mod lineage;
 #[cfg(test)]
 #[path = "lineage_test.rs"]
@@ -8,7 +9,10 @@ use clap::{Parser, Subcommand};
 use std::fs;
 
 #[derive(Parser)]
-#[command(name = "dataguard-engine", about = "DataGuard Rail Rust analysis engine")]
+#[command(
+    name = "dataguard-engine",
+    about = "DataGuard Rail Rust analysis engine"
+)]
 struct Args {
     #[command(subcommand)]
     command: Command,
@@ -33,6 +37,9 @@ enum Command {
         /// 品質ルール YAML ファイル
         #[arg(long)]
         rules: String,
+        /// 出力先 JSON ファイル (- で stdout)
+        #[arg(long, default_value = "violations.json")]
+        out: String,
     },
 }
 
@@ -53,8 +60,7 @@ fn main() -> Result<()> {
             if out == "-" {
                 println!("{json}");
             } else {
-                fs::write(&out, &json)
-                    .with_context(|| format!("Failed to write output: {out}"))?;
+                fs::write(&out, &json).with_context(|| format!("Failed to write output: {out}"))?;
                 eprintln!(
                     "lineage: {} tables, {} edges → {out}",
                     report.tables.len(),
@@ -62,9 +68,17 @@ fn main() -> Result<()> {
                 );
             }
         }
-        Command::Check { .. } => {
-            eprintln!("check — not yet implemented (Phase 2+)");
-            std::process::exit(1);
+        Command::Check { input, rules, out } => {
+            let detected_at = chrono::Utc::now().to_rfc3339();
+            let violations = check::check_file(&input, &rules, &detected_at)?;
+            let json = serde_json::to_string_pretty(&violations)?;
+
+            if out == "-" {
+                println!("{json}");
+            } else {
+                fs::write(&out, &json).with_context(|| format!("Failed to write output: {out}"))?;
+                eprintln!("check: {} violation(s) → {out}", violations.len());
+            }
         }
     }
     Ok(())
