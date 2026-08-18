@@ -6,9 +6,11 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/flipslidersand/dataguard-rail/internal/alert"
 	"github.com/flipslidersand/dataguard-rail/internal/config"
 	"github.com/flipslidersand/dataguard-rail/internal/engine"
 	"github.com/flipslidersand/dataguard-rail/internal/ingester"
+	"github.com/flipslidersand/dataguard-rail/internal/telemetry"
 	"go.uber.org/zap"
 )
 
@@ -52,12 +54,15 @@ type Result struct {
 }
 
 // Run は全 DataSource を順に処理し、ソースごとの結果を返す。
-func Run(ctx context.Context, cfg *config.Config, rulesPath, tmpDir string, loader Loader, chk Checker, saver Saver, log *zap.Logger) ([]Result, error) {
+func Run(ctx context.Context, cfg *config.Config, rulesPath, tmpDir string, loader Loader, chk Checker, saver Saver, notifier alert.Notifier, log *zap.Logger) ([]Result, error) {
 	if log == nil {
 		log = zap.NewNop()
 	}
 	if loader == nil {
 		loader = DefaultLoader{}
+	}
+	if notifier == nil {
+		notifier = alert.NoopNotifier{}
 	}
 	results := make([]Result, 0, len(cfg.Sources))
 
@@ -67,6 +72,10 @@ func Run(ctx context.Context, cfg *config.Config, rulesPath, tmpDir string, load
 			return results, fmt.Errorf("source %q: %w", src.Name, err)
 		}
 		log.Info("ingested", zap.String("source", src.Name), zap.String("type", string(src.Type)), zap.Int("violations", n))
+		telemetry.RecordIngest(ctx, src.Name, string(src.Type), int64(n))
+		if n > 0 {
+			_ = notifier.Notify(ctx, fmt.Sprintf("[dataguard] %s: %d violation(s) detected", src.Name, n))
+		}
 		results = append(results, Result{Source: src.Name, Violations: n})
 	}
 	return results, nil

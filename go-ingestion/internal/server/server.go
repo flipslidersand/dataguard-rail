@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/flipslidersand/dataguard-rail/internal/alert"
 	"github.com/flipslidersand/dataguard-rail/internal/engine"
 	"github.com/flipslidersand/dataguard-rail/internal/store"
 	"github.com/gin-gonic/gin"
@@ -24,18 +25,22 @@ type Runner interface {
 
 // Server は HTTP サーバーの依存セットを保持する。
 type Server struct {
-	store  Storer
-	runner Runner
-	engine *gin.Engine
+	store    Storer
+	runner   Runner
+	notifier alert.Notifier
+	engine   *gin.Engine
 }
 
 // New はサーバーインスタンスを生成する。
-func New(st Storer, runner Runner) *Server {
+func New(st Storer, runner Runner, notifier alert.Notifier) *Server {
+	if notifier == nil {
+		notifier = alert.NoopNotifier{}
+	}
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
 
-	s := &Server{store: st, runner: runner, engine: r}
+	s := &Server{store: st, runner: runner, notifier: notifier, engine: r}
 	s.registerRoutes()
 	return s
 }

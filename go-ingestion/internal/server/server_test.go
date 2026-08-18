@@ -27,7 +27,7 @@ type fakeRunner struct{ payload json.RawMessage }
 func (f *fakeRunner) Analyze(_ string) (json.RawMessage, error) { return f.payload, nil }
 
 func newTestServer(st Storer, runner Runner) *Server {
-	return New(st, runner)
+	return New(st, runner, nil)
 }
 
 func TestHealth(t *testing.T) {
