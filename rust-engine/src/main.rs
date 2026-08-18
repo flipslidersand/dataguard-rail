@@ -1,4 +1,5 @@
 mod check;
+mod grpc;
 mod lineage;
 #[cfg(test)]
 #[path = "lineage_test.rs"]
@@ -22,64 +23,86 @@ struct Args {
 enum Command {
     /// SQL ファイルからテーブルリネージュを生成する
     Analyze {
-        /// 解析対象の SQL 文字列またはファイルパス
         #[arg(long)]
         sql: String,
-        /// 出力先 JSON ファイル (- で stdout)
         #[arg(long, default_value = "lineage.json")]
         out: String,
     },
-    /// CSV ファイルに品質ルールを適用して violations を出力する (Phase 2+)
+    /// CSV ファイルに品質ルールを適用して violations を出力する
     Check {
-        /// 入力 CSV ファイル
         #[arg(long)]
         input: String,
-        /// 品質ルール YAML ファイル
         #[arg(long)]
         rules: String,
-        /// 出力先 JSON ファイル (- で stdout)
         #[arg(long, default_value = "violations.json")]
         out: String,
     },
+    /// gRPC サーバーを起動する (Phase 5)
+    Serve {
+        #[arg(long, default_value = "[::1]:50051")]
+        addr: String,
+    },
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let args = Args::parse();
     match args.command {
-        Command::Analyze { sql, out } => {
-            let sql_text = if std::path::Path::new(&sql).exists() {
-                fs::read_to_string(&sql)
-                    .with_context(|| format!("Failed to read SQL file: {sql}"))?
-            } else {
-                sql
-            };
-
-            let report = lineage::analyze(&sql_text)?;
-            let json = serde_json::to_string_pretty(&report)?;
-
-            if out == "-" {
-                println!("{json}");
-            } else {
-                fs::write(&out, &json).with_context(|| format!("Failed to write output: {out}"))?;
-                eprintln!(
-                    "lineage: {} tables, {} edges → {out}",
-                    report.tables.len(),
-                    report.edges.len()
-                );
-            }
-        }
-        Command::Check { input, rules, out } => {
-            let detected_at = chrono::Utc::now().to_rfc3339();
-            let violations = check::check_file(&input, &rules, &detected_at)?;
-            let json = serde_json::to_string_pretty(&violations)?;
-
-            if out == "-" {
-                println!("{json}");
-            } else {
-                fs::write(&out, &json).with_context(|| format!("Failed to write output: {out}"))?;
-                eprintln!("check: {} violation(s) → {out}", violations.len());
-            }
-        }
+        Command::Analyze { sql, out } => run_analyze(sql, out),
+        Command::Check { input, rules, out } => run_check(input, rules, out),
+        Command::Serve { addr } => run_serve(addr).await,
     }
+}
+
+fn run_analyze(sql: String, out: String) -> Result<()> {
+    let sql_text = if std::path::Path::new(&sql).exists() {
+        fs::read_to_string(&sql).with_context(|| format!("Failed to read SQL file: {sql}"))?
+    } else {
+        sql
+    };
+
+    let report = lineage::analyze(&sql_text)?;
+    let json = serde_json::to_string_pretty(&report)?;
+
+    if out == "-" {
+        println!("{json}");
+    } else {
+        fs::write(&out, &json).with_context(|| format!("Failed to write output: {out}"))?;
+        eprintln!(
+            "lineage: {} tables, {} edges → {out}",
+            report.tables.len(),
+            report.edges.len()
+        );
+    }
+    Ok(())
+}
+
+fn run_check(input: String, rules: String, out: String) -> Result<()> {
+    let detected_at = chrono::Utc::now().to_rfc3339();
+    let violations = check::check_file(&input, &rules, &detected_at)?;
+    let json = serde_json::to_string_pretty(&violations)?;
+
+    if out == "-" {
+        println!("{json}");
+    } else {
+        fs::write(&out, &json).with_context(|| format!("Failed to write output: {out}"))?;
+        eprintln!("check: {} violation(s) → {out}", violations.len());
+    }
+    Ok(())
+}
+
+async fn run_serve(addr: String) -> Result<()> {
+    use grpc::dataguard::data_guard_server::DataGuardServer;
+    use grpc::DataGuardService;
+    use tonic::transport::Server;
+
+    let addr_parsed = addr.parse().with_context(|| format!("invalid addr: {addr}"))?;
+    eprintln!("gRPC server listening on {addr}");
+
+    Server::builder()
+        .add_service(DataGuardServer::new(DataGuardService::default()))
+        .serve(addr_parsed)
+        .await
+        .context("gRPC server error")?;
     Ok(())
 }

@@ -32,25 +32,27 @@ func newIngestCmd() *cobra.Command {
 		rulesPath  string
 		dbPath     string
 		engineBin  string
+		grpcAddr   string
 		tmpDir     string
 	)
 	cmd := &cobra.Command{
 		Use:   "ingest",
 		Short: "Ingest data sources, run quality checks via the Rust engine, persist violations",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runIngest(configPath, rulesPath, dbPath, engineBin, tmpDir)
+			return runIngest(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir)
 		},
 	}
 	f := cmd.Flags()
 	f.StringVar(&configPath, "config", "sources.yaml", "データソース定義 YAML")
 	f.StringVar(&rulesPath, "rules", "rules.yaml", "品質ルール YAML")
 	f.StringVar(&dbPath, "db", "data/violations", "BadgerDB のパス")
-	f.StringVar(&engineBin, "engine-bin", engine.DefaultBin, "dataguard-engine バイナリのパス")
+	f.StringVar(&engineBin, "engine-bin", engine.DefaultBin, "dataguard-engine バイナリのパス（--grpc-addr 未指定時）")
+	f.StringVar(&grpcAddr, "grpc-addr", "", "dataguard-engine gRPC アドレス（例: localhost:50051）")
 	f.StringVar(&tmpDir, "tmp", "", "一時 CSV の出力先 (既定: OS の一時ディレクトリ)")
 	return cmd
 }
 
-func runIngest(configPath, rulesPath, dbPath, engineBin, tmpDir string) error {
+func runIngest(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir string) error {
 	log, _ := zap.NewProduction()
 	defer func() { _ = log.Sync() }()
 
@@ -70,7 +72,17 @@ func runIngest(configPath, rulesPath, dbPath, engineBin, tmpDir string) error {
 	}
 	defer st.Close()
 
-	runner := engine.New(engineBin)
+	var runner pipeline.Checker
+	if grpcAddr != "" {
+		gr, err := engine.NewGrpc(grpcAddr)
+		if err != nil {
+			return err
+		}
+		defer gr.Close()
+		runner = gr
+	} else {
+		runner = engine.New(engineBin)
+	}
 
 	results, err := pipeline.Run(context.Background(), cfg, rulesPath, td, pipeline.DefaultLoader{}, runner, st, log)
 	if err != nil {
@@ -95,22 +107,24 @@ func newServeCmd() *cobra.Command {
 		addr      string
 		dbPath    string
 		engineBin string
+		grpcAddr  string
 	)
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Start REST API server (Phase 4)",
+		Short: "Start REST API server",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runServe(addr, dbPath, engineBin)
+			return runServe(addr, dbPath, engineBin, grpcAddr)
 		},
 	}
 	f := cmd.Flags()
 	f.StringVar(&addr, "addr", ":8080", "リッスンアドレス")
 	f.StringVar(&dbPath, "db", "data/violations", "BadgerDB のパス")
-	f.StringVar(&engineBin, "engine-bin", engine.DefaultBin, "dataguard-engine バイナリのパス")
+	f.StringVar(&engineBin, "engine-bin", engine.DefaultBin, "dataguard-engine バイナリのパス（--grpc-addr 未指定時）")
+	f.StringVar(&grpcAddr, "grpc-addr", "", "dataguard-engine gRPC アドレス（例: localhost:50051）")
 	return cmd
 }
 
-func runServe(addr, dbPath, engineBin string) error {
+func runServe(addr, dbPath, engineBin, grpcAddr string) error {
 	log, _ := zap.NewProduction()
 	defer func() { _ = log.Sync() }()
 
@@ -120,7 +134,17 @@ func runServe(addr, dbPath, engineBin string) error {
 	}
 	defer st.Close()
 
-	runner := engine.New(engineBin)
+	var runner server.Runner
+	if grpcAddr != "" {
+		gr, err := engine.NewGrpc(grpcAddr)
+		if err != nil {
+			return err
+		}
+		defer gr.Close()
+		runner = gr
+	} else {
+		runner = engine.New(engineBin)
+	}
 	srv := server.New(st, runner)
 
 	log.Info("starting server", zap.String("addr", addr))
