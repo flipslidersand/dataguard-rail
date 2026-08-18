@@ -1,0 +1,30 @@
+# Rust
+rust-engine/target/
+rust-engine/Cargo.lock
+
+# Go
+go-ingestion/vendor/
+
+# BadgerDB data
+data/
+
+# Temp CSV
+*.tmp.csv
+
+# OS
+.DS_Store
+*.swp
+*.tmp
+
+# IDE
+.idea/
+.vscode/
+
+# Claude
+.claude/
+
+# Secrets
+.env
+.env.*
+*.secret
+credentials.*
