@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/flipslidersand/dataguard-rail/internal/alert"
 	"github.com/flipslidersand/dataguard-rail/internal/config"
 	"github.com/flipslidersand/dataguard-rail/internal/engine"
 	"github.com/flipslidersand/dataguard-rail/internal/ingester"
 	"github.com/flipslidersand/dataguard-rail/internal/pipeline"
 	"github.com/flipslidersand/dataguard-rail/internal/server"
 	"github.com/flipslidersand/dataguard-rail/internal/store"
+	"github.com/flipslidersand/dataguard-rail/internal/telemetry"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -20,6 +22,9 @@ func main() {
 		Use:   "dataguard",
 		Short: "DataGuard Rail — realtime data quality & lineage",
 	}
+	// グローバルフラグ: OTel / Slack
+	root.PersistentFlags().String("otel-endpoint", "", "OTel OTLP エンドポイント（空=stdout）")
+	root.PersistentFlags().String("slack-webhook", "", "Slack Incoming Webhook URL（空=通知なし）")
 	root.AddCommand(newIngestCmd(), newServeCmd())
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -38,8 +43,10 @@ func newIngestCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ingest",
 		Short: "Ingest data sources, run quality checks via the Rust engine, persist violations",
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return runIngest(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			otelEndpoint, _ := cmd.Root().PersistentFlags().GetString("otel-endpoint")
+			slackWebhook, _ := cmd.Root().PersistentFlags().GetString("slack-webhook")
+			return runIngest(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelEndpoint, slackWebhook)
 		},
 	}
 	f := cmd.Flags()
@@ -52,20 +59,28 @@ func newIngestCmd() *cobra.Command {
 	return cmd
 }
 
-func runIngest(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir string) error {
+func runIngest(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelEndpoint, slackWebhook string) error {
+	ctx := context.Background()
 	log, _ := zap.NewProduction()
 	defer func() { _ = log.Sync() }()
+
+	shutdown, err := telemetry.Init(ctx, otelEndpoint)
+	if err != nil {
+		log.Warn("otel init failed", zap.Error(err))
+	} else {
+		defer shutdown()
+	}
+
+	notifier := alert.NewSlack(slackWebhook)
 
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		return err
 	}
-
 	td, err := ingester.TempDir(tmpDir)
 	if err != nil {
 		return err
 	}
-
 	st, err := store.Open(dbPath)
 	if err != nil {
 		return err
@@ -84,7 +99,7 @@ func runIngest(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir string
 		runner = engine.New(engineBin)
 	}
 
-	results, err := pipeline.Run(context.Background(), cfg, rulesPath, td, pipeline.DefaultLoader{}, runner, st, log)
+	results, err := pipeline.Run(ctx, cfg, rulesPath, td, pipeline.DefaultLoader{}, runner, st, notifier, log)
 	if err != nil {
 		return err
 	}
@@ -112,8 +127,10 @@ func newServeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Start REST API server",
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return runServe(addr, dbPath, engineBin, grpcAddr)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			otelEndpoint, _ := cmd.Root().PersistentFlags().GetString("otel-endpoint")
+			slackWebhook, _ := cmd.Root().PersistentFlags().GetString("slack-webhook")
+			return runServe(addr, dbPath, engineBin, grpcAddr, otelEndpoint, slackWebhook)
 		},
 	}
 	f := cmd.Flags()
@@ -124,9 +141,17 @@ func newServeCmd() *cobra.Command {
 	return cmd
 }
 
-func runServe(addr, dbPath, engineBin, grpcAddr string) error {
+func runServe(addr, dbPath, engineBin, grpcAddr, otelEndpoint, slackWebhook string) error {
+	ctx := context.Background()
 	log, _ := zap.NewProduction()
 	defer func() { _ = log.Sync() }()
+
+	shutdown, err := telemetry.Init(ctx, otelEndpoint)
+	if err != nil {
+		log.Warn("otel init failed", zap.Error(err))
+	} else {
+		defer shutdown()
+	}
 
 	st, err := store.Open(dbPath)
 	if err != nil {
@@ -145,7 +170,9 @@ func runServe(addr, dbPath, engineBin, grpcAddr string) error {
 	} else {
 		runner = engine.New(engineBin)
 	}
-	srv := server.New(st, runner)
+
+	notifier := alert.NewSlack(slackWebhook)
+	srv := server.New(st, runner, notifier)
 
 	log.Info("starting server", zap.String("addr", addr))
 	return srv.Run(addr)

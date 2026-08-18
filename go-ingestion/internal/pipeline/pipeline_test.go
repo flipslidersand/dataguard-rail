@@ -50,7 +50,7 @@ func TestRunCSVSource(t *testing.T) {
 	saver := &fakeSaver{}
 
 	// loader=nil → DefaultLoader (実 CSV 読込み)
-	results, err := Run(context.Background(), cfg, "rules.yaml", dir, nil, chk, saver, nil)
+	results, err := Run(context.Background(), cfg, "rules.yaml", dir, nil, chk, saver, nil, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestRunPostgresSource(t *testing.T) {
 	chk := &fakeChecker{}
 	saver := &fakeSaver{}
 
-	results, err := Run(context.Background(), cfg, "rules.yaml", t.TempDir(), loader, chk, saver, nil)
+	results, err := Run(context.Background(), cfg, "rules.yaml", t.TempDir(), loader, chk, saver, nil, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
