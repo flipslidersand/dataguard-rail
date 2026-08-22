@@ -137,3 +137,37 @@ func TestSchemaDiffTable(t *testing.T) {
 		t.Errorf("want 1 added column, got %d", len(got.Added))
 	}
 }
+
+func TestDashboard(t *testing.T) {
+	srv := newTestServer(&fakeStore{}, &fakeRunner{})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/", nil)
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", w.Code)
+	}
+	ct := w.Header().Get("Content-Type")
+	if ct != "text/html; charset=utf-8" {
+		t.Errorf("unexpected Content-Type: %s", ct)
+	}
+	body := w.Body.String()
+	if !containsAll(body, "DataGuard Rail", "/api/violations", "/api/schema-diff") {
+		t.Error("dashboard HTML missing expected content")
+	}
+}
+
+func containsAll(s string, subs ...string) bool {
+	for _, sub := range subs {
+		found := false
+		for i := 0; i <= len(s)-len(sub); i++ {
+			if s[i:i+len(sub)] == sub {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
