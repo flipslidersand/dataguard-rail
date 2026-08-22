@@ -1,6 +1,7 @@
 mod check;
 mod grpc;
 mod lineage;
+mod profile;
 #[cfg(test)]
 #[path = "lineage_test.rs"]
 mod lineage_test;
@@ -37,6 +38,13 @@ enum Command {
         #[arg(long, default_value = "violations.json")]
         out: String,
     },
+    /// CSV ファイルの各カラムを統計プロファイリングする
+    Profile {
+        #[arg(long)]
+        input: String,
+        #[arg(long, default_value = "profile.json")]
+        out: String,
+    },
     /// gRPC サーバーを起動する (Phase 5)
     Serve {
         #[arg(long, default_value = "[::1]:50051")]
@@ -50,6 +58,7 @@ async fn main() -> Result<()> {
     match args.command {
         Command::Analyze { sql, out } => run_analyze(sql, out),
         Command::Check { input, rules, out } => run_check(input, rules, out),
+        Command::Profile { input, out } => run_profile(input, out),
         Command::Serve { addr } => run_serve(addr).await,
     }
 }
@@ -72,6 +81,24 @@ fn run_analyze(sql: String, out: String) -> Result<()> {
             "lineage: {} tables, {} edges → {out}",
             report.tables.len(),
             report.edges.len()
+        );
+    }
+    Ok(())
+}
+
+fn run_profile(input: String, out: String) -> Result<()> {
+    let profiled_at = chrono::Utc::now().to_rfc3339();
+    let report = profile::profile_file(&input, &profiled_at)?;
+    let json = serde_json::to_string_pretty(&report)?;
+
+    if out == "-" {
+        println!("{json}");
+    } else {
+        fs::write(&out, &json).with_context(|| format!("Failed to write output: {out}"))?;
+        eprintln!(
+            "profile: {} rows, {} columns → {out}",
+            report.row_count,
+            report.columns.len()
         );
     }
     Ok(())
