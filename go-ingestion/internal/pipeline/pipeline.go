@@ -38,6 +38,8 @@ func (DefaultLoader) Load(ctx context.Context, src config.DataSource) (*ingester
 	switch src.Type {
 	case config.CSV:
 		return ingester.LoadCSV(src.Path)
+	case config.JSONL:
+		return ingester.LoadJSONL(src.Path)
 	case config.Postgres:
 		return ingester.LoadPostgres(ctx, src.DSN, src.Query)
 	default:

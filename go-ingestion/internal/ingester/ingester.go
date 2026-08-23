@@ -3,7 +3,10 @@
 package ingester
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -35,6 +38,90 @@ func LoadCSV(path string) (*Dataset, error) {
 	}
 
 	return &Dataset{Headers: records[0], Rows: records[1:]}, nil
+}
+
+// LoadJSONL は JSON Lines ファイル (1行1オブジェクト) を読み込み Dataset にする。
+// カラム順は最初の非空行のキー出現順で確定する。後続行に未知のキーがあれば無視する。
+func LoadJSONL(path string) (*Dataset, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open jsonl %q: %w", path, err)
+	}
+	defer f.Close()
+
+	var lines [][]byte
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		b := scanner.Bytes()
+		if len(b) == 0 {
+			continue
+		}
+		cp := make([]byte, len(b))
+		copy(cp, b)
+		lines = append(lines, cp)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan jsonl %q: %w", path, err)
+	}
+	if len(lines) == 0 {
+		return nil, fmt.Errorf("jsonl %q: 有効な行がありません", path)
+	}
+
+	// 最初の行を token レベルで走査してキー挿入順を確定する。
+	headers, headerIdx, err := jsonlHeaders(lines[0])
+	if err != nil {
+		return nil, fmt.Errorf("jsonl %q line 1: %w", path, err)
+	}
+
+	rows := make([][]string, 0, len(lines))
+	for i, line := range lines {
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(line, &obj); err != nil {
+			return nil, fmt.Errorf("jsonl %q line %d: %w", path, i+1, err)
+		}
+		row := make([]string, len(headers))
+		for k, raw := range obj {
+			idx, ok := headerIdx[k]
+			if !ok {
+				continue
+			}
+			var s string
+			if err := json.Unmarshal(raw, &s); err != nil {
+				s = string(raw) // 数値・bool・null はそのまま文字列化
+			}
+			row[idx] = s
+		}
+		rows = append(rows, row)
+	}
+	return &Dataset{Headers: headers, Rows: rows}, nil
+}
+
+// jsonlHeaders は JSON オブジェクトの1行からキー出現順にヘッダを抽出する。
+func jsonlHeaders(line []byte) ([]string, map[string]int, error) {
+	dec := json.NewDecoder(bytes.NewReader(line))
+	if _, err := dec.Token(); err != nil { // '{'
+		return nil, nil, fmt.Errorf("expected '{': %w", err)
+	}
+	var headers []string
+	idx := map[string]int{}
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil, nil, err
+		}
+		key, ok := tok.(string)
+		if !ok {
+			return nil, nil, fmt.Errorf("expected string key")
+		}
+		if _, dup := idx[key]; !dup {
+			idx[key] = len(headers)
+			headers = append(headers, key)
+		}
+		if err := dec.Decode(new(json.RawMessage)); err != nil { // skip value
+			return nil, nil, err
+		}
+	}
+	return headers, idx, nil
 }
 
 // WriteTempCSV は Dataset を一時 CSV に書き出し、パスと後片付け関数を返す。
