@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/flipslidersand/dataguard-rail/internal/alert"
 	"github.com/flipslidersand/dataguard-rail/internal/config"
 	"github.com/flipslidersand/dataguard-rail/internal/engine"
+	"github.com/flipslidersand/dataguard-rail/internal/scheduler"
 	"github.com/flipslidersand/dataguard-rail/internal/ingester"
 	"github.com/flipslidersand/dataguard-rail/internal/pipeline"
 	"github.com/flipslidersand/dataguard-rail/internal/server"
@@ -39,6 +42,7 @@ func newIngestCmd() *cobra.Command {
 		engineBin  string
 		grpcAddr   string
 		tmpDir     string
+		daemon     bool
 	)
 	cmd := &cobra.Command{
 		Use:   "ingest",
@@ -46,6 +50,9 @@ func newIngestCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			otelEndpoint, _ := cmd.Root().PersistentFlags().GetString("otel-endpoint")
 			slackWebhook, _ := cmd.Root().PersistentFlags().GetString("slack-webhook")
+			if daemon {
+				return runDaemon(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelEndpoint, slackWebhook)
+			}
 			return runIngest(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelEndpoint, slackWebhook)
 		},
 	}
@@ -56,6 +63,7 @@ func newIngestCmd() *cobra.Command {
 	f.StringVar(&engineBin, "engine-bin", engine.DefaultBin, "dataguard-engine バイナリのパス（--grpc-addr 未指定時）")
 	f.StringVar(&grpcAddr, "grpc-addr", "", "dataguard-engine gRPC アドレス（例: localhost:50051）")
 	f.StringVar(&tmpDir, "tmp", "", "一時 CSV の出力先 (既定: OS の一時ディレクトリ)")
+	f.BoolVar(&daemon, "daemon", false, "sources.yaml の schedule に従って定期実行するデーモンモード")
 	return cmd
 }
 
@@ -114,6 +122,86 @@ func runIngest(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelE
 		fmt.Printf("- %s: %d violation(s)\n", r.Source, r.Violations)
 	}
 	fmt.Printf("ingest complete: %d violation(s) across %d source(s) → %s\n", total, len(results), dbPath)
+	return nil
+}
+
+func runDaemon(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelEndpoint, slackWebhook string) error {
+	ctx := context.Background()
+	log, _ := zap.NewProduction()
+	defer func() { _ = log.Sync() }()
+
+	shutdown, err := telemetry.Init(ctx, otelEndpoint)
+	if err != nil {
+		log.Warn("otel init failed", zap.Error(err))
+	} else {
+		defer shutdown()
+	}
+
+	notifier := alert.NewSlack(slackWebhook)
+
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return err
+	}
+	td, err := ingester.TempDir(tmpDir)
+	if err != nil {
+		return err
+	}
+	st, err := store.Open(dbPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	var runner pipeline.Checker
+	if grpcAddr != "" {
+		gr, err := engine.NewGrpc(grpcAddr)
+		if err != nil {
+			return err
+		}
+		defer gr.Close()
+		runner = gr
+	} else {
+		runner = engine.New(engineBin)
+	}
+
+	jobRunner := scheduler.BuildRunner(rulesPath, td, pipeline.DefaultLoader{}, runner, st, notifier, log)
+
+	// schedule なしのソースを即時実行
+	var onDemand []config.DataSource
+	for _, src := range cfg.Sources {
+		if src.Schedule == "" {
+			onDemand = append(onDemand, src)
+		}
+	}
+	if len(onDemand) > 0 {
+		immediateCfg := &config.Config{Sources: onDemand}
+		if _, err := pipeline.Run(ctx, immediateCfg, rulesPath, td, pipeline.DefaultLoader{}, runner, st, notifier, log); err != nil {
+			log.Warn("immediate ingest failed", zap.Error(err))
+		}
+	}
+
+	sched := scheduler.New(log)
+	for _, src := range cfg.Sources {
+		if err := sched.Register(src, jobRunner); err != nil {
+			return err
+		}
+	}
+
+	if !sched.HasJobs() {
+		log.Info("no scheduled sources found — exiting (use schedule field in sources.yaml for daemon mode)")
+		return nil
+	}
+
+	sched.Start()
+	log.Info("scheduler started — waiting for SIGINT/SIGTERM")
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Info("shutting down scheduler…")
+	sched.Stop()
 	return nil
 }
 
