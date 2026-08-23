@@ -2,6 +2,12 @@
 name = "dataguard-engine"
 version = "0.1.0"
 edition = "2021"
+description = "Rust analysis engine for DataGuard Rail — SQL column lineage, CSV quality rules (not_null/comparison/regex/unique), and data profiling"
+license = "MIT"
+repository = "https://github.com/flipslidersand/dataguard-rail"
+keywords = ["data-quality", "lineage", "csv", "cli", "grpc"]
+categories = ["command-line-utilities", "data-structures"]
+include = ["src/**", "proto/**", "build.rs", "Cargo.toml", "README.md"]
 
 [dependencies]
 sqlparser = "0.46"

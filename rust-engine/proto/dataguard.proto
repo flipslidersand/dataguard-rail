@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package dataguard;
+
+option go_package = "github.com/flipslidersand/dataguard-rail/internal/pb";
+
+service DataGuard {
+  rpc Analyze(AnalyzeRequest)  returns (AnalyzeResponse);
+  rpc Check(CheckRequest)      returns (CheckResponse);
+}
+
+message AnalyzeRequest {
+  string sql_path = 1;
+}
+
+message AnalyzeResponse {
+  // Rust engine の analyze 出力 JSON をそのまま文字列で返す
+  string lineage_json = 1;
+}
+
+message CheckRequest {
+  string csv_path   = 1;
+  string rules_path = 2;
+}
+
+message CheckResponse {
+  // Rust engine の check 出力 JSON をそのまま文字列で返す
+  string violations_json = 1;
+}
