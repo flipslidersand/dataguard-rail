@@ -96,6 +96,42 @@ dataguard ingest --grpc-addr localhost:50051 \
   --rules examples/rules.yaml
 ```
 
+### スケジューラモード（--daemon）
+
+`sources.yaml` に `schedule` フィールドを追加すると cron 式でソースを定期実行できます。
+
+```yaml
+# sources.yaml
+sources:
+  - name: products
+    type: csv
+    path: ./data/products.csv
+    schedule: "0 * * * *"     # 毎時0分に実行
+
+  - name: events
+    type: jsonl
+    path: ./data/events.jsonl
+    schedule: "*/10 * * * *"  # 10分おきに実行
+
+  - name: orders
+    type: postgres
+    dsn: "postgres://user:pass@localhost/shop"
+    query: "SELECT * FROM orders WHERE updated_at > now() - interval '1 day'"
+    # schedule なし → 起動時に即時1回実行
+```
+
+```bash
+dataguard ingest --daemon \
+  --config examples/sources.yaml \
+  --rules examples/rules.yaml \
+  --db data/violations
+# SIGINT / SIGTERM で graceful shutdown
+```
+
+- `schedule` あり: cron スケジュールに従い繰り返し実行
+- `schedule` なし: 起動時に即時1回実行してデーモンを継続
+- `@every 30s` / `@hourly` / `@daily` などの省略表記も使用可能
+
 ### REST API + Web UI サーバー起動
 
 ```bash
@@ -183,15 +219,18 @@ sources:
   - name: products
     type: csv
     path: ./data/products.csv
+    schedule: "0 * * * *"       # 毎時0分（省略すると起動時に即時1回）
 
   - name: events
     type: jsonl
     path: ./data/events.jsonl
+    schedule: "*/10 * * * *"    # 10分おき
 
   - name: orders
     type: postgres
     dsn: "postgres://user:pass@localhost/shop"
     query: "SELECT * FROM orders WHERE updated_at > now() - interval '1 day'"
+    schedule: "@hourly"         # 省略表記も使用可能
 ```
 
 ## Architecture Decision Records
