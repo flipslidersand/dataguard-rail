@@ -14,6 +14,8 @@ type SourceType string
 const (
 	// CSV はローカル CSV ファイルソース。
 	CSV SourceType = "csv"
+	// JSONL はローカル JSON Lines ファイルソース (1行1オブジェクト)。
+	JSONL SourceType = "jsonl"
 	// Postgres は PostgreSQL クエリソース。
 	Postgres SourceType = "postgres"
 )
@@ -62,16 +64,16 @@ func (d *DataSource) validate() error {
 		return fmt.Errorf("source: name が必須です")
 	}
 	switch d.Type {
-	case CSV:
+	case CSV, JSONL:
 		if d.Path == "" {
-			return fmt.Errorf("source %q: csv には path が必須です", d.Name)
+			return fmt.Errorf("source %q: %s には path が必須です", d.Name, d.Type)
 		}
 	case Postgres:
 		if d.DSN == "" || d.Query == "" {
 			return fmt.Errorf("source %q: postgres には dsn と query が必須です", d.Name)
 		}
 	default:
-		return fmt.Errorf("source %q: 未対応の type %q (csv|postgres)", d.Name, d.Type)
+		return fmt.Errorf("source %q: 未対応の type %q (csv|jsonl|postgres)", d.Name, d.Type)
 	}
 	return nil
 }

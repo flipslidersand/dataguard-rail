@@ -6,6 +6,12 @@ sources:
     path: ./data/products.csv
     schedule: "0 * * * *" # Phase 3 では未使用 (将来のスケジューラ用)
 
+  # JSON Lines ソース (1行1オブジェクト)
+  # - name: events
+  #   type: jsonl
+  #   path: ./data/events.jsonl
+  #   schedule: "*/10 * * * *"
+
   # PostgreSQL ソース (pgx で接続しクエリ結果を取込む)
   # - name: orders
   #   type: postgres
