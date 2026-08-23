@@ -46,6 +46,8 @@ func New(st Storer, runner Runner, notifier alert.Notifier) *Server {
 }
 
 func (s *Server) registerRoutes() {
+	s.engine.GET("/", s.handleDashboard)
+
 	s.engine.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
