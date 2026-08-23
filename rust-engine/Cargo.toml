@@ -12,6 +12,7 @@ serde_yaml = "0.9"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 csv = "1"
+regex = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 
 tonic = "0.11"

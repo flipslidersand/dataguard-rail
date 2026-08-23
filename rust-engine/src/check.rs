@@ -1,11 +1,13 @@
 //! CSV に品質ルール (rules.yaml) を適用して violations を生成する。
 //!
 //! 対応する式:
-//! - `not_null`           … `column` が空でないこと
-//! - `value <op> <num>`   … `column` の数値が条件を満たすこと (op: > >= < <= == !=)
-//! - `count <op> <num>`   … `key` ごとの出現数が条件を満たすこと (重複検出)
+//! - `not_null`              … `column` が空でないこと
+//! - `value <op> <num>`      … `column` の数値が条件を満たすこと (op: > >= < <= == !=)
+//! - `count <op> <num>`      … `key` ごとの出現数が条件を満たすこと (重複検出)
+//! - `matches /<pattern>/`   … `column` が正規表現にマッチすること
 
 use anyhow::{anyhow, bail, Context, Result};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -81,6 +83,7 @@ enum Check {
     NotNull { column: String },
     Compare { column: String, op: Op, rhs: f64 },
     Unique { key: String, op: Op, rhs: f64 },
+    Matches { column: String, re: Regex },
 }
 
 impl Check {
@@ -121,6 +124,28 @@ impl Check {
                 }
                 _ => {}
             }
+        }
+
+        // matches /<pattern>/
+        if let Some(rest) = expr.strip_prefix("matches ") {
+            let pat = rest.trim();
+            let inner = pat
+                .strip_prefix('/')
+                .and_then(|s| s.strip_suffix('/'))
+                .ok_or_else(|| {
+                    anyhow!(
+                        "rule `{}`: matches 式は `/pattern/` 形式が必須 (got `{}`)",
+                        raw.name,
+                        pat
+                    )
+                })?;
+            let column = raw
+                .column
+                .clone()
+                .ok_or_else(|| anyhow!("rule `{}`: matches 式は column が必須", raw.name))?;
+            let re = Regex::new(inner)
+                .with_context(|| format!("rule `{}`: 正規表現が無効 `{}`", raw.name, inner))?;
+            return Ok(Check::Matches { column, re });
         }
 
         bail!("rule `{}`: 未対応の式 `{}`", raw.name, expr)
@@ -201,6 +226,15 @@ fn evaluate(
                     let ok = cell.trim().parse::<f64>().map(|v| op.eval(v, rhs));
                     // 数値化できない or 条件を満たさない → 違反
                     if !matches!(ok, Ok(true)) {
+                        push(&mut violations, &raw.name, i + 1, &column, cell);
+                    }
+                }
+            }
+            Check::Matches { column, re } => {
+                let idx = col_index(headers, &column, &raw.name)?;
+                for (i, rec) in records.iter().enumerate() {
+                    let cell = rec.get(idx).map(|s| s.as_str()).unwrap_or("");
+                    if !re.is_match(cell) {
                         push(&mut violations, &raw.name, i + 1, &column, cell);
                     }
                 }
@@ -308,6 +342,42 @@ mod tests {
         let headers = vec!["id".into()];
         let records = rows(&[&["1"]]);
         let rules = vec![raw("r", Some("nope"), None, "value > 0")];
+        assert!(evaluate(&headers, &records, &rules, "t", "T").is_err());
+    }
+
+    #[test]
+    fn matches_flags_non_conforming() {
+        let headers = vec!["code".into()];
+        let records = rows(&[&["AB1234"], &["ab1234"], &["X9"], &["CD5678"]]);
+        let rules = vec![raw("valid_code", Some("code"), None, r"matches /^[A-Z]{2}[0-9]{4}$/")];
+        let v = evaluate(&headers, &records, &rules, "t", "T").unwrap();
+        assert_eq!(v.len(), 2);
+        assert_eq!(v[0].value, "ab1234");
+        assert_eq!(v[1].value, "X9");
+    }
+
+    #[test]
+    fn matches_empty_cell_is_violation() {
+        let headers = vec!["email".into()];
+        let records = rows(&[&["user@example.com"], &[""], &["notanemail"]]);
+        let rules = vec![raw("valid_email", Some("email"), None, r"matches /^[^@]+@[^@]+\.[^@]+$/")];
+        let v = evaluate(&headers, &records, &rules, "t", "T").unwrap();
+        assert_eq!(v.len(), 2);
+    }
+
+    #[test]
+    fn matches_invalid_regex_errors() {
+        let headers = vec!["x".into()];
+        let records = rows(&[&["a"]]);
+        let rules = vec![raw("r", Some("x"), None, "matches /[invalid/")];
+        assert!(evaluate(&headers, &records, &rules, "t", "T").is_err());
+    }
+
+    #[test]
+    fn matches_missing_slash_errors() {
+        let headers = vec!["x".into()];
+        let records = rows(&[&["a"]]);
+        let rules = vec![raw("r", Some("x"), None, "matches noSlash")];
         assert!(evaluate(&headers, &records, &rules, "t", "T").is_err());
     }
 }
