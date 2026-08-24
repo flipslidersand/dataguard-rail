@@ -1,50 +1,50 @@
 # DataGuard Rail
 
-リアルタイムデータ品質チェック・カラムリネージュ追跡プラットフォーム（Rust + Go）。
+Real-time data quality checking and column lineage tracking platform (Rust engine + Go ingestion layer).
 
-## 主な機能
+## Features
 
-| 機能 | 説明 |
+| Feature | Description |
 |---|---|
-| SQL リネージュ解析 | `CREATE TABLE AS SELECT` / `CREATE VIEW` からカラム依存を抽出 |
-| CSV 品質ルール評価 | `rules.yaml` で not_null / 比較演算 / ユニーク制約 / 正規表現を定義 |
-| データプロファイリング | カラムごとの min / max / mean / null_rate / unique_count を自動算出 |
-| データ取込み | CSV / JSONL / PostgreSQL ソースを取込み → violations を BadgerDB に保存 |
-| REST API + Web UI | `GET /` ダッシュボード / violations / lineage / schema-diff エンドポイント |
-| gRPC 統合 | Go ↔ Rust を tonic gRPC で接続（`--grpc-addr` で切替） |
-| OTel + アラート | violations.total メトリクス / Trace Span / Slack Webhook 通知 |
+| SQL Lineage Analysis | Extracts column dependencies from `CREATE TABLE AS SELECT` / `CREATE VIEW` |
+| CSV Quality Rules | Define `not_null` / comparison / unique / regex constraints in `rules.yaml` |
+| Data Profiling | Auto-computes min / max / mean / null_rate / unique_count per column |
+| Data Ingestion | CSV / JSONL / PostgreSQL sources → violations stored in BadgerDB |
+| REST API + Web UI | Dashboard + violations / lineage / schema-diff endpoints |
+| gRPC Integration | Go ↔ Rust connected via tonic gRPC (`--grpc-addr` flag) |
+| OTel + Alerts | violations.total metric / Trace spans / Slack Webhook notifications |
 
-## 使用技術
+## Tech Stack
 
-- **Rust**: sqlparser-rs, petgraph, tonic (gRPC server), regex, serde, clap, tokio
-- **Go**: gin, pgx/v5, BadgerDB, cobra, zap, OpenTelemetry SDK
+- **Rust:** sqlparser-rs, petgraph, tonic (gRPC server), regex, serde, clap, tokio
+- **Go:** gin, pgx/v5, BadgerDB, cobra, zap, OpenTelemetry SDK
 
-## ディレクトリ構成
+## Directory Structure
 
 ```
 dataguard-rail/
-├── proto/                       # gRPC proto 定義
+├── proto/                       # gRPC proto definitions
 │   └── dataguard.proto
-├── rust-engine/                 # Rust 解析エンジン
+├── rust-engine/                 # Rust analysis engine
 │   ├── src/
 │   │   ├── main.rs             # CLI (analyze / check / profile / serve)
-│   │   ├── lineage.rs          # SQL リネージュ解析
-│   │   ├── check.rs            # CSV 品質ルール評価（regex 対応）
-│   │   ├── profile.rs          # CSV データプロファイリング
-│   │   └── grpc.rs             # tonic gRPC サーバー
+│   │   ├── lineage.rs          # SQL lineage analysis
+│   │   ├── check.rs            # CSV quality rule evaluation
+│   │   ├── profile.rs          # CSV data profiling
+│   │   └── grpc.rs             # tonic gRPC server
 │   └── Cargo.toml
-├── go-ingestion/                # Go 取込み層 + REST API
-│   ├── cmd/dataguard/main.go   # CLI エントリポイント
+├── go-ingestion/                # Go ingestion layer + REST API
+│   ├── cmd/dataguard/main.go
 │   └── internal/
-│       ├── config/             # YAML 設定読み込み (csv/jsonl/postgres)
-│       ├── ingester/           # CSV / JSONL / PostgreSQL 取込み
-│       ├── engine/             # Rust engine 呼び出し (exec / gRPC)
-│       ├── pipeline/           # ingest フロー
-│       ├── store/              # BadgerDB 永続化
-│       ├── server/             # gin REST API + Web UI ダッシュボード
-│       ├── telemetry/          # OTel 初期化・メトリクス
-│       ├── alert/              # Slack Webhook 通知
-│       └── pb/                 # protoc 生成ファイル
+│       ├── config/             # YAML config loading
+│       ├── ingester/           # CSV / JSONL / PostgreSQL ingestion
+│       ├── engine/             # Rust engine invocation (exec / gRPC)
+│       ├── pipeline/           # ingest flow
+│       ├── store/              # BadgerDB persistence
+│       ├── server/             # gin REST API + Web UI dashboard
+│       ├── telemetry/          # OTel init + metrics
+│       ├── alert/              # Slack Webhook notifications
+│       └── pb/                 # protoc-generated files
 └── docs/
     ├── spec.md
     ├── data-model.md
@@ -53,29 +53,25 @@ dataguard-rail/
     └── adr/                    # Architecture Decision Records
 ```
 
-## セットアップ
-
-### 必要環境
+## Prerequisites
 
 - Rust 1.75+
 - Go 1.24+
-- protoc（gRPC コード生成時のみ）
+- protoc (only needed for gRPC code generation)
 
-### ビルド
+## Build
 
 ```bash
-# Rust エンジン
-cd rust-engine
-cargo build --release
+# Rust engine
+cd rust-engine && cargo build --release
 
-# Go 取込み層
-cd go-ingestion
-go build ./cmd/dataguard
+# Go ingestion layer
+cd go-ingestion && go build ./cmd/dataguard
 ```
 
-## 実行方法
+## Running
 
-### データ取込み（exec モード）
+### Ingest data (exec mode)
 
 ```bash
 dataguard ingest \
@@ -84,40 +80,34 @@ dataguard ingest \
   --db data/violations
 ```
 
-### データ取込み（gRPC モード）
+### Ingest data (gRPC mode)
 
 ```bash
-# 1. Rust gRPC サーバーを起動
+# 1. Start Rust gRPC server
 dataguard-engine serve --addr [::1]:50051
 
-# 2. Go から gRPC で接続
+# 2. Connect from Go via gRPC
 dataguard ingest --grpc-addr localhost:50051 \
   --config examples/sources.yaml \
   --rules examples/rules.yaml
 ```
 
-### スケジューラモード（--daemon）
+### Daemon mode (scheduled ingestion)
 
-`sources.yaml` に `schedule` フィールドを追加すると cron 式でソースを定期実行できます。
+Add a `schedule` field to `sources.yaml` for cron-based execution:
 
 ```yaml
-# sources.yaml
 sources:
   - name: products
     type: csv
     path: ./data/products.csv
-    schedule: "0 * * * *"     # 毎時0分に実行
-
-  - name: events
-    type: jsonl
-    path: ./data/events.jsonl
-    schedule: "*/10 * * * *"  # 10分おきに実行
+    schedule: "0 * * * *"      # every hour
 
   - name: orders
     type: postgres
     dsn: "postgres://user:pass@localhost/shop"
     query: "SELECT * FROM orders WHERE updated_at > now() - interval '1 day'"
-    # schedule なし → 起動時に即時1回実行
+    # no schedule → runs once on startup
 ```
 
 ```bash
@@ -125,35 +115,22 @@ dataguard ingest --daemon \
   --config examples/sources.yaml \
   --rules examples/rules.yaml \
   --db data/violations
-# SIGINT / SIGTERM で graceful shutdown
 ```
 
-- `schedule` あり: cron スケジュールに従い繰り返し実行
-- `schedule` なし: 起動時に即時1回実行してデーモンを継続
-- `@every 30s` / `@hourly` / `@daily` などの省略表記も使用可能
-
-### REST API + Web UI サーバー起動
+### REST API + Web UI
 
 ```bash
 dataguard serve --addr :8080 --db data/violations
-# ブラウザで http://localhost:8080/ を開くとダッシュボードが表示される
+# Open http://localhost:8080/ for the dashboard
 ```
 
-### OTel + Slack アラート付きで起動
-
-```bash
-dataguard serve \
-  --otel-endpoint ""  \
-  --slack-webhook https://hooks.slack.com/services/xxx
-```
-
-### SQL リネージュ解析
+### SQL Lineage Analysis
 
 ```bash
 dataguard-engine analyze --sql examples/sample.sql --out lineage.json
 ```
 
-### CSV 品質チェック
+### CSV Quality Check
 
 ```bash
 dataguard-engine check \
@@ -162,36 +139,35 @@ dataguard-engine check \
   --out violations.json
 ```
 
-### CSV データプロファイリング
+### CSV Data Profiling
 
 ```bash
 dataguard-engine profile \
   --input data/products.csv \
   --out profile.json
-# 出力: 各カラムの null_rate / unique_count / min / max / mean
 ```
 
-## テスト
+## Tests
 
 ```bash
-# Rust (21 テスト)
+# Rust (21 tests)
 cd rust-engine && cargo test
 
-# Go (全パッケージ)
+# Go (all packages)
 cd go-ingestion && go test ./...
 ```
 
-## API エンドポイント
+## API Endpoints
 
-| メソッド | パス | 説明 |
+| Method | Path | Description |
 |---|---|---|
-| GET | `/` | violations & schema-diff ダッシュボード（Web UI） |
-| GET | `/health` | ヘルスチェック |
-| GET | `/api/violations` | 違反一覧（`?table=xxx` でフィルタ） |
-| GET | `/api/lineage` | リネージュ取得（`?sql=path/to/file.sql`） |
-| GET | `/api/schema-diff` | スキーマ差分（`?table=xxx`） |
+| GET | `/` | Violations + schema-diff dashboard (Web UI) |
+| GET | `/health` | Health check |
+| GET | `/api/violations` | List violations (`?table=xxx` to filter) |
+| GET | `/api/lineage` | Get lineage (`?sql=path/to/file.sql`) |
+| GET | `/api/schema-diff` | Schema diff (`?table=xxx`) |
 
-## 品質ルール定義例（rules.yaml）
+## Quality Rules (`rules.yaml`)
 
 ```yaml
 rules:
@@ -212,30 +188,10 @@ rules:
     expression: "matches /^[A-Z]{2}[0-9]{4}$/"
 ```
 
-## データソース定義例（sources.yaml）
-
-```yaml
-sources:
-  - name: products
-    type: csv
-    path: ./data/products.csv
-    schedule: "0 * * * *"       # 毎時0分（省略すると起動時に即時1回）
-
-  - name: events
-    type: jsonl
-    path: ./data/events.jsonl
-    schedule: "*/10 * * * *"    # 10分おき
-
-  - name: orders
-    type: postgres
-    dsn: "postgres://user:pass@localhost/shop"
-    query: "SELECT * FROM orders WHERE updated_at > now() - interval '1 day'"
-    schedule: "@hourly"         # 省略表記も使用可能
-```
-
 ## Architecture Decision Records
 
 - [ADR-001](docs/adr/ADR-001-sqlparser-rs.md): sqlparser-rs + GenericDialect
-- [ADR-002](docs/adr/ADR-002-petgraph-lineage.md): petgraph DiGraph によるリネージュ
-- [ADR-003](docs/adr/ADR-003-exec-first-grpc-later.md): exec first → Phase 5 で gRPC 移行
-- [ADR-004](docs/adr/ADR-004-go-ingestion-badgerdb.md): BadgerDB による violations 永続化
+- [ADR-002](docs/adr/ADR-002-petgraph-lineage.md): petgraph DiGraph for lineage
+- [ADR-003](docs/adr/ADR-003-exec-first-grpc-later.md): exec-first → gRPC in Phase 5
+- [ADR-004](docs/adr/ADR-004-go-ingestion-badgerdb.md): BadgerDB for violation persistence
+
