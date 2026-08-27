@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"time"
 )
 
 // Notifier は通知先を抽象化する。
@@ -25,7 +27,7 @@ func NewSlack(webhookURL string) Notifier {
 	if webhookURL == "" {
 		return NoopNotifier{}
 	}
-	return &SlackNotifier{webhookURL: webhookURL, client: &http.Client{}}
+	return &SlackNotifier{webhookURL: webhookURL, client: &http.Client{Timeout: 10 * time.Second}}
 }
 
 // Notify は Slack Webhook に msg を送信する。
@@ -45,6 +47,7 @@ func (s *SlackNotifier) Notify(ctx context.Context, msg string) error {
 		return fmt.Errorf("slack post: %w", err)
 	}
 	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("slack returned status %d", resp.StatusCode)
 	}
