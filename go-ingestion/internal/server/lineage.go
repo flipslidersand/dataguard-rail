@@ -22,7 +22,7 @@ func (s *Server) handleLineage(c *gin.Context) {
 	}
 	span.SetAttributes(attribute.String("sql.path", sqlPath))
 
-	raw, err := s.runner.Analyze(sqlPath)
+	raw, err := s.runner.Analyze(c.Request.Context(), sqlPath)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

@@ -18,18 +18,25 @@ type Runner func(ctx context.Context, src config.DataSource) error
 
 // Scheduler は cron ジョブを管理する。
 type Scheduler struct {
-	c   *cron.Cron
-	log *zap.Logger
+	c      *cron.Cron
+	ctx    context.Context
+	cancel context.CancelFunc
+	log    *zap.Logger
 }
 
 // New は Scheduler を生成する。
-func New(log *zap.Logger) *Scheduler {
+// ctx はジョブ全体のライフサイクルを制御する cancelable context を渡す。
+// Stop() を呼ぶと ctx がキャンセルされ、実行中ジョブにシャットダウンシグナルが伝播する。
+func New(ctx context.Context, log *zap.Logger) *Scheduler {
 	if log == nil {
 		log = zap.NewNop()
 	}
+	jobCtx, cancel := context.WithCancel(ctx)
 	return &Scheduler{
-		c:   cron.New(),
-		log: log,
+		c:      cron.New(),
+		ctx:    jobCtx,
+		cancel: cancel,
+		log:    log,
 	}
 }
 
@@ -40,9 +47,10 @@ func (s *Scheduler) Register(src config.DataSource, run Runner) error {
 		return nil
 	}
 	log := s.log
+	ctx := s.ctx
 	_, err := s.c.AddFunc(src.Schedule, func() {
 		log.Info("scheduled ingest start", zap.String("source", src.Name), zap.String("schedule", src.Schedule))
-		if err := run(context.Background(), src); err != nil {
+		if err := run(ctx, src); err != nil {
 			log.Error("scheduled ingest error", zap.String("source", src.Name), zap.Error(err))
 		} else {
 			log.Info("scheduled ingest done", zap.String("source", src.Name))
@@ -57,8 +65,11 @@ func (s *Scheduler) Register(src config.DataSource, run Runner) error {
 // Start は cron ループを開始する。
 func (s *Scheduler) Start() { s.c.Start() }
 
-// Stop は cron ループを停止し、実行中のジョブが完了するまで待つ。
-func (s *Scheduler) Stop() { s.c.Stop() }
+// Stop は実行中ジョブの ctx をキャンセルし、cron ループを停止して完了を待つ。
+func (s *Scheduler) Stop() {
+	s.cancel()
+	s.c.Stop()
+}
 
 // HasJobs はスケジュール登録済みジョブがあるかを返す。
 func (s *Scheduler) HasJobs() bool { return len(s.c.Entries()) > 0 }

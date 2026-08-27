@@ -126,7 +126,8 @@ func runIngest(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelE
 }
 
 func runDaemon(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelEndpoint, slackWebhook string) error {
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 	log, _ := zap.NewProduction()
 	defer func() { _ = log.Sync() }()
 
@@ -181,7 +182,7 @@ func runDaemon(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelE
 		}
 	}
 
-	sched := scheduler.New(log)
+	sched := scheduler.New(ctx, log)
 	for _, src := range cfg.Sources {
 		if err := sched.Register(src, jobRunner); err != nil {
 			return err
@@ -196,9 +197,7 @@ func runDaemon(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelE
 	sched.Start()
 	log.Info("scheduler started — waiting for SIGINT/SIGTERM")
 
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+	<-ctx.Done()
 
 	log.Info("shutting down scheduler…")
 	sched.Stop()
