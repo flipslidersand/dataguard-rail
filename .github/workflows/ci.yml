@@ -56,4 +56,9 @@ jobs:
         run: go vet ./...
 
       - name: Go test
-        run: go test -race ./...
+        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Coverage threshold
+        run: |
+          pct=$(go tool cover -func=coverage.out | awk '/^total/ {print $3}' | tr -d '%')
+          awk "BEGIN { if (${pct} < 40) { print \"Coverage \" ${pct} \"% is below 40%\"; exit 1 } }"
