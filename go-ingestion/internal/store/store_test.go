@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/flipslidersand/dataguard-rail/internal/engine"
@@ -38,6 +39,37 @@ func TestSaveAndListViolations(t *testing.T) {
 		if !found[k] {
 			t.Errorf("missing violation %s", k)
 		}
+	}
+}
+
+// TestSaveViolationsLargeBatch はバッチ境界をまたぐ件数（txnBatchSize+1）で
+// SaveViolations が全件保存できることを確認する。
+func TestSaveViolationsLargeBatch(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	n := txnBatchSize + 1
+	vs := make([]engine.Violation, n)
+	for i := 0; i < n; i++ {
+		vs[i] = engine.Violation{
+			ID:    fmt.Sprintf("v%d", i),
+			Rule:  "rule",
+			Table: "t",
+			Row:   i,
+		}
+	}
+	if err := s.SaveViolations(vs); err != nil {
+		t.Fatalf("SaveViolations: %v", err)
+	}
+	got, err := s.ListViolations()
+	if err != nil {
+		t.Fatalf("ListViolations: %v", err)
+	}
+	if len(got) != n {
+		t.Fatalf("want %d violations, got %d", n, len(got))
 	}
 }
 
