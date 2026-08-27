@@ -7,6 +7,7 @@
 //! - `matches /<pattern>/`   … `column` が正規表現にマッチすること
 
 use anyhow::{anyhow, bail, Context, Result};
+use chrono::Utc;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -194,11 +195,12 @@ fn evaluate(
     detected_at: &str,
 ) -> Result<Vec<Violation>> {
     let mut violations: Vec<Violation> = Vec::new();
+    let run_ms = Utc::now().timestamp_millis();
     let mut seq = 0usize;
     let mut push = |v: &mut Vec<Violation>, rule: &str, row: usize, column: &str, value: &str| {
         seq += 1;
         v.push(Violation {
-            id: format!("viol-{seq}"),
+            id: format!("viol-{run_ms}-{seq}"),
             rule: rule.to_string(),
             table: table.to_string(),
             row,
@@ -331,10 +333,34 @@ mod tests {
         ];
         let v = evaluate(&headers, &records, &rules, "t", "T").unwrap();
         assert_eq!(v.len(), 2);
-        assert_eq!(v[0].id, "viol-1");
-        assert_eq!(v[1].id, "viol-2");
+        // IDs contain a unix-ms prefix to be unique across runs: viol-{ms}-{seq}
+        assert!(v[0].id.starts_with("viol-"), "expected viol- prefix, got {}", v[0].id);
+        assert!(v[0].id.ends_with("-1"), "expected seq suffix -1, got {}", v[0].id);
+        assert!(v[1].id.ends_with("-2"), "expected seq suffix -2, got {}", v[1].id);
+        // IDs within the same run share the same timestamp prefix
+        let prefix0 = v[0].id.trim_end_matches("-1");
+        let prefix1 = v[1].id.trim_end_matches("-2");
+        assert_eq!(prefix0, prefix1, "same-run IDs should share timestamp prefix");
         assert_eq!(v[0].rule, "positive_price");
         assert_eq!(v[1].rule, "no_null_email");
+    }
+
+    #[test]
+    fn violation_id_unique_across_runs() {
+        // Calling evaluate twice must produce non-colliding IDs even for the same table/row.
+        let headers = vec!["x".into()];
+        let records = rows(&[&[""]]);
+        let rules = vec![raw("not_null_x", Some("x"), None, "not_null")];
+        let v1 = evaluate(&headers, &records, &rules, "t", "T1").unwrap();
+        // Sleep briefly so that timestamp_millis() advances between calls.
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let v2 = evaluate(&headers, &records, &rules, "t", "T2").unwrap();
+        assert_eq!(v1.len(), 1);
+        assert_eq!(v2.len(), 1);
+        assert_ne!(
+            v1[0].id, v2[0].id,
+            "IDs from different runs must not collide"
+        );
     }
 
     #[test]
