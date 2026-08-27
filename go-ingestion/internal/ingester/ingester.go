@@ -7,10 +7,15 @@ import (
 	"bytes"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 )
+
+// jsonlMaxLineBytes は LoadJSONL で許容する1行の最大バイト数 (10 MiB)。
+// bufio.Scanner のデフォルト 64 KB では base64 埋め込み画像などで失敗するため拡張する。
+const jsonlMaxLineBytes = 10 << 20 // 10 MiB
 
 // Dataset は取込んだ表形式データの内部表現。
 type Dataset struct {
@@ -51,6 +56,8 @@ func LoadJSONL(path string) (*Dataset, error) {
 
 	var lines [][]byte
 	scanner := bufio.NewScanner(f)
+	// デフォルト 64 KB を 10 MiB に拡張し、base64 埋め込みなど大行のサイレント失敗を防ぐ。
+	scanner.Buffer(make([]byte, 0, 64*1024), jsonlMaxLineBytes)
 	for scanner.Scan() {
 		b := scanner.Bytes()
 		if len(b) == 0 {
@@ -61,6 +68,9 @@ func LoadJSONL(path string) (*Dataset, error) {
 		lines = append(lines, cp)
 	}
 	if err := scanner.Err(); err != nil {
+		if errors.Is(err, bufio.ErrTooLong) {
+			return nil, fmt.Errorf("scan jsonl %q: 行サイズが上限 (%d bytes) を超えています (base64 埋め込みや巨大フィールドが含まれている可能性があります): %w", path, jsonlMaxLineBytes, err)
+		}
 		return nil, fmt.Errorf("scan jsonl %q: %w", path, err)
 	}
 	if len(lines) == 0 {

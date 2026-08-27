@@ -1,8 +1,11 @@
 package ingester
 
 import (
+	"errors"
+	"bufio"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -110,6 +113,37 @@ func TestLoadCSVErrors(t *testing.T) {
 	}
 	if _, err := LoadCSV(writeCSV(t, "")); err == nil {
 		t.Error("expected error for empty file")
+	}
+}
+
+// TestLoadJSONLLargeLine は 64KB を超える行が正常にパースできることを確認する (#59)。
+func TestLoadJSONLLargeLine(t *testing.T) {
+	// 100KB のダミー文字列を値に持つ JSON 行を作成する。
+	largeValue := strings.Repeat("x", 100*1024)
+	src := `{"key":"` + largeValue + `"}` + "\n"
+	ds, err := LoadJSONL(writeJSONL(t, src))
+	if err != nil {
+		t.Fatalf("LoadJSONL with 100KB line: %v", err)
+	}
+	if len(ds.Rows) != 1 || ds.Rows[0][0] != largeValue {
+		t.Errorf("large-line value mismatch (len=%d)", len(ds.Rows[0][0]))
+	}
+}
+
+// TestLoadJSONLTooLongReturnsHint は jsonlMaxLineBytes を超えた行がヒント付きエラーを返すことを確認する (#59)。
+func TestLoadJSONLTooLongReturnsHint(t *testing.T) {
+	// jsonlMaxLineBytes+1 バイトの値を持つ行を作成する。
+	oversized := strings.Repeat("y", jsonlMaxLineBytes+1)
+	src := `{"key":"` + oversized + `"}` + "\n"
+	_, err := LoadJSONL(writeJSONL(t, src))
+	if err == nil {
+		t.Fatal("expected error for oversized line, got nil")
+	}
+	if !errors.Is(err, bufio.ErrTooLong) {
+		t.Errorf("expected bufio.ErrTooLong in error chain, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "行サイズが上限") {
+		t.Errorf("expected hint message in error, got: %v", err)
 	}
 }
 
