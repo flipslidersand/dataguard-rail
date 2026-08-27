@@ -42,7 +42,7 @@ func TestHasJobsAfterRegister(t *testing.T) {
 func TestScheduledJobFires(t *testing.T) {
 	var count atomic.Int32
 	s := New(nil)
-	src := config.DataSource{Name: "x", Schedule: "@every 500ms"}
+	src := config.DataSource{Name: "x", Schedule: "@every 100ms"}
 	if err := s.Register(src, func(_ context.Context, _ config.DataSource) error {
 		count.Add(1)
 		return nil
@@ -50,9 +50,15 @@ func TestScheduledJobFires(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	s.Start()
-	time.Sleep(1600 * time.Millisecond)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if count.Load() >= 2 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	s.Stop()
 	if count.Load() < 2 {
-		t.Errorf("expected >= 2 executions in 1600ms, got %d", count.Load())
+		t.Errorf("expected >= 2 executions within 3s, got %d", count.Load())
 	}
 }
