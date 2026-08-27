@@ -126,30 +126,38 @@ func jsonlHeaders(line []byte) ([]string, map[string]int, error) {
 
 // WriteTempCSV は Dataset を一時 CSV に書き出し、パスと後片付け関数を返す。
 // PostgreSQL ソースでもこの経由で Rust engine に渡せるように共通化している。
+// エラー時は関数内で一時ファイルを削除し、cleanup=nil を返す。
+// 成功時のみ cleanup クロージャを返すため、呼び出し元は常に defer cleanup() できる。
 func WriteTempCSV(ds *Dataset, dir string) (path string, cleanup func(), err error) {
 	f, err := os.CreateTemp(dir, "dataguard-*.csv")
 	if err != nil {
 		return "", nil, fmt.Errorf("create temp csv: %w", err)
 	}
 	path = f.Name()
-	cleanup = func() { _ = os.Remove(path) }
+	// errCleanup は失敗パスで一時ファイルを確実に削除するヘルパー。
+	errCleanup := func() { f.Close(); _ = os.Remove(path) }
 
 	w := csv.NewWriter(f)
 	if err := w.Write(ds.Headers); err != nil {
-		f.Close()
-		cleanup()
+		errCleanup()
 		return "", nil, fmt.Errorf("write header: %w", err)
 	}
-	if err := w.WriteAll(ds.Rows); err != nil { // WriteAll は内部で Flush する
-		f.Close()
-		cleanup()
+	if err := w.WriteAll(ds.Rows); err != nil {
+		errCleanup()
 		return "", nil, fmt.Errorf("write rows: %w", err)
 	}
+	// WriteAll は内部で Flush を呼ぶが、OS レベルの write エラーは
+	// Flush 後にしか検出できないケースがあるため w.Error() を明示チェックする。
+	w.Flush()
+	if err := w.Error(); err != nil {
+		errCleanup()
+		return "", nil, fmt.Errorf("flush temp csv: %w", err)
+	}
 	if err := f.Close(); err != nil {
-		cleanup()
+		_ = os.Remove(path)
 		return "", nil, fmt.Errorf("close temp csv: %w", err)
 	}
-	return path, cleanup, nil
+	return path, func() { _ = os.Remove(path) }, nil
 }
 
 // TempDir は一時 CSV の出力先ディレクトリを返す (存在しなければ作成)。
