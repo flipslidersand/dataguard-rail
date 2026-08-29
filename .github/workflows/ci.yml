@@ -32,10 +32,10 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Cargo test
-        run: cargo test --locked
+        run: cargo test
 
       - name: Cargo clippy
-        run: cargo clippy --locked -- -D warnings
+        run: cargo clippy -- -D warnings
 
   go:
     name: Go tests
