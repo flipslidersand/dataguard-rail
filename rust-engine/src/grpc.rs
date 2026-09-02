@@ -4,13 +4,13 @@ use tonic::{Request, Response, Status};
 
 // tonic-build が proto から生成するモジュール
 pub mod dataguard {
+    #![allow(clippy::result_large_err)]
     tonic::include_proto!("dataguard");
 }
 
 use dataguard::data_guard_server::DataGuard;
 use dataguard::{AnalyzeRequest, AnalyzeResponse, CheckRequest, CheckResponse};
 
-#[derive(Default)]
 pub struct DataGuardService;
 
 #[tonic::async_trait]
