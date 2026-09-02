@@ -37,20 +37,46 @@ func key(v engine.Violation) []byte {
 	return []byte(fmt.Sprintf("%s%s:%s", keyPrefix, v.Table, v.ID))
 }
 
-// SaveViolations は violations を 1 トランザクションで保存する。
+// txnBatchSize は 1 トランザクションあたりの最大 violation 件数。
+// BadgerDB の ErrTxnTooBig を避けるために小さく保つ。
+const txnBatchSize = 1000
+
+// SaveViolations は violations をバッチトランザクションで保存する。
+// txnBatchSize 件ごと、または ErrTxnTooBig 発生時に commit & 再開する。
 func (s *Store) SaveViolations(violations []engine.Violation) error {
-	return s.db.Update(func(txn *badger.Txn) error {
-		for _, v := range violations {
-			data, err := json.Marshal(v)
-			if err != nil {
-				return fmt.Errorf("marshal violation %s: %w", v.ID, err)
-			}
-			if err := txn.Set(key(v), data); err != nil {
-				return fmt.Errorf("set violation %s: %w", v.ID, err)
-			}
+	txn := s.db.NewTransaction(true)
+	committed := 0
+	for i, v := range violations {
+		data, err := json.Marshal(v)
+		if err != nil {
+			txn.Discard()
+			return fmt.Errorf("marshal violation %s: %w", v.ID, err)
 		}
-		return nil
-	})
+
+	retry:
+		if err := txn.Set(key(v), data); err != nil {
+			if err == badger.ErrTxnTooBig {
+				if commitErr := txn.Commit(); commitErr != nil {
+					return fmt.Errorf("commit batch at index %d: %w", committed, commitErr)
+				}
+				committed = i
+				txn = s.db.NewTransaction(true)
+				goto retry
+			}
+			txn.Discard()
+			return fmt.Errorf("set violation %s: %w", v.ID, err)
+		}
+
+		// バッチサイズに達したら commit して新しいトランザクションを開始する。
+		if (i+1)%txnBatchSize == 0 {
+			if commitErr := txn.Commit(); commitErr != nil {
+				return fmt.Errorf("commit batch at index %d: %w", i, commitErr)
+			}
+			committed = i + 1
+			txn = s.db.NewTransaction(true)
+		}
+	}
+	return txn.Commit()
 }
 
 // ListViolations は保存済みの全 violation を prefix scan で返す。
