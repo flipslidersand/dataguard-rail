@@ -49,6 +49,7 @@ func TestLoadRejectsInvalid(t *testing.T) {
 		"pg missing dsn":   "sources:\n  - name: x\n    type: postgres\n    query: q\n",
 		"unknown type":     "sources:\n  - name: x\n    type: kafka\n",
 		"no name":          "sources:\n  - type: csv\n    path: p\n",
+		"bad schedule":     "sources:\n  - name: x\n    type: csv\n    path: p\n    schedule: \"not-a-cron\"\n",
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -56,5 +57,32 @@ func TestLoadRejectsInvalid(t *testing.T) {
 				t.Errorf("expected error for %s", name)
 			}
 		})
+	}
+}
+
+func TestLoadValidSchedule(t *testing.T) {
+	// schedule が正しい cron 書式であれば Load が成功することを確認する。
+	p := writeTemp(t, `
+sources:
+  - name: daily_csv
+    type: csv
+    path: ./data/daily.csv
+    schedule: "0 0 * * *"
+`)
+	if _, err := Load(p); err != nil {
+		t.Fatalf("valid schedule should not error: %v", err)
+	}
+}
+
+func TestLoadEmptyScheduleOK(t *testing.T) {
+	// schedule が未指定でも Load が成功することを確認する。
+	p := writeTemp(t, `
+sources:
+  - name: no_sched
+    type: csv
+    path: ./data/file.csv
+`)
+	if _, err := Load(p); err != nil {
+		t.Fatalf("empty schedule should not error: %v", err)
 	}
 }

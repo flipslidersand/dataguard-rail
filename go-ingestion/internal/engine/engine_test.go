@@ -69,3 +69,18 @@ func TestNewDefaultsBin(t *testing.T) {
 		t.Errorf("New(\"\") should default to %q", DefaultBin)
 	}
 }
+
+func TestCheckRejectsRelativeBin(t *testing.T) {
+	// 相対パスの Bin は PATH ハイジャック防止のため実行前にエラーになること。
+	r := &Runner{Bin: "dataguard-engine"}
+	if _, err := r.Check("in.csv", "rules.yaml"); err == nil {
+		t.Error("expected error when Bin is not an absolute path")
+	}
+}
+
+func TestAnalyzeRejectsRelativeBin(t *testing.T) {
+	r := &Runner{Bin: "dataguard-engine"}
+	if _, err := r.Analyze("schema.sql"); err == nil {
+		t.Error("expected error when Bin is not an absolute path")
+	}
+}

@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 )
 
-// DefaultBin はバイナリパス未指定時の既定 (PATH 上の dataguard-engine)。
+// DefaultBin は bin 未指定時の既定値。絶対パスでないため New() に渡すとエラーになる。
+// 呼び出し元はインストール先の絶対パス (例: "/usr/local/bin/dataguard-engine") を指定すること。
 const DefaultBin = "dataguard-engine"
 
 // Violation は check の出力 (Rust 側 data-model.md の Violation に一致)。
@@ -28,7 +30,9 @@ type Runner struct {
 	Bin string
 }
 
-// New は Runner を返す。bin が空なら DefaultBin を使う。
+// New は Runner を返す。bin は絶対パスでなければならない。
+// 空文字列を渡した場合は DefaultBin を使うが、絶対パスでないためエラーになる。
+// 実行前に run() 内で filepath.IsAbs を検証する。
 func New(bin string) *Runner {
 	if bin == "" {
 		bin = DefaultBin
@@ -61,7 +65,11 @@ func (r *Runner) Analyze(sqlPath string) (json.RawMessage, error) {
 }
 
 // run はサブプロセスを実行し stdout を返す。非ゼロ終了時は stderr を含めてエラー化する。
+// PATH ハイジャック防止のため、Bin は絶対パスでなければならない。
 func (r *Runner) run(args ...string) ([]byte, error) {
+	if !filepath.IsAbs(r.Bin) {
+		return nil, fmt.Errorf("engine: Bin %q は絶対パスでなければなりません (PATH ハイジャック防止)", r.Bin)
+	}
 	cmd := exec.Command(r.Bin, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
 )
 
@@ -74,6 +75,11 @@ func (d *DataSource) validate() error {
 		}
 	default:
 		return fmt.Errorf("source %q: 未対応の type %q (csv|jsonl|postgres)", d.Name, d.Type)
+	}
+	if d.Schedule != "" {
+		if _, err := cron.ParseStandard(d.Schedule); err != nil {
+			return fmt.Errorf("source %q: schedule %q が不正な cron 書式です: %w", d.Name, d.Schedule, err)
+		}
 	}
 	return nil
 }
