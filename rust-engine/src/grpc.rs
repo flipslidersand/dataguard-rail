@@ -21,6 +21,22 @@ impl DataGuard for DataGuardService {
     ) -> Result<Response<AnalyzeResponse>, Status> {
         let sql_path = request.into_inner().sql_path;
 
+        // パストラバーサル防止: ".." コンポーネントおよび ".sql" 以外の拡張子を拒否する
+        {
+            use std::path::{Component, Path};
+            let p = Path::new(&sql_path);
+            let has_parent_dir = p
+                .components()
+                .any(|c| c == Component::ParentDir);
+            let has_sql_ext = p
+                .extension()
+                .map(|e| e.eq_ignore_ascii_case("sql"))
+                .unwrap_or(false);
+            if has_parent_dir || !has_sql_ext {
+                return Err(Status::invalid_argument("無効な sql パスです"));
+            }
+        }
+
         let sql_text = std::fs::read_to_string(&sql_path)
             .with_context(|| format!("cannot read {sql_path}"))
             .map_err(|e| Status::invalid_argument(e.to_string()))?;
