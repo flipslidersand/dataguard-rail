@@ -127,7 +127,7 @@ async fn run_serve(addr: String) -> Result<()> {
     eprintln!("gRPC server listening on {addr}");
 
     Server::builder()
-        .add_service(DataGuardServer::new(DataGuardService::default()))
+        .add_service(DataGuardServer::new(DataGuardService))
         .serve(addr_parsed)
         .await
         .context("gRPC server error")?;

@@ -56,10 +56,7 @@ pub fn analyze(sql: &str) -> Result<LineageReport> {
         // テーブルノードを graph に追加
         for tbl in sl.sources.iter().chain(sl.target.iter()) {
             let t = tbl.to_lowercase();
-            if !node_index.contains_key(&t) {
-                let idx = graph.add_node(t.clone());
-                node_index.insert(t, idx);
-            }
+            node_index.entry(t.clone()).or_insert_with(|| graph.add_node(t));
         }
         // エッジ: source → target
         if let Some(ref target) = sl.target {

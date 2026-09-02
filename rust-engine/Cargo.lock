@@ -408,6 +408,7 @@ dependencies = [
  "csv",
  "petgraph",
  "prost",
+ "regex",
  "serde",
  "serde_json",
  "serde_yaml",
