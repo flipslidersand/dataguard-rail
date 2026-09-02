@@ -14,7 +14,7 @@ import (
 // fakeChecker は与えられた CSV パスの存在を確認し、固定の violation を返す。
 type fakeChecker struct{ lastInput string }
 
-func (f *fakeChecker) Check(inputCSV, _ string) ([]engine.Violation, error) {
+func (f *fakeChecker) Check(_ context.Context, inputCSV, _ string) ([]engine.Violation, error) {
 	f.lastInput = inputCSV
 	if _, err := os.Stat(inputCSV); err != nil {
 		return nil, err

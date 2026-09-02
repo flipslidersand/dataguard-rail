@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -27,7 +28,7 @@ func itoa(n int) string {
 func TestCheckParsesViolations(t *testing.T) {
 	json := `[{"id":"viol-1","rule":"positive_price","table":"products","row":2,"column":"sale_price","value":"-5","detected_at":"2026-08-17T00:00:00+00:00"}]`
 	r := New(fakeBin(t, json, 0))
-	vs, err := r.Check("in.csv", "rules.yaml")
+	vs, err := r.Check(context.Background(), "in.csv", "rules.yaml")
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
@@ -41,7 +42,7 @@ func TestCheckParsesViolations(t *testing.T) {
 
 func TestCheckEmpty(t *testing.T) {
 	r := New(fakeBin(t, "[]", 0))
-	vs, err := r.Check("in.csv", "rules.yaml")
+	vs, err := r.Check(context.Background(), "in.csv", "rules.yaml")
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
@@ -52,14 +53,14 @@ func TestCheckEmpty(t *testing.T) {
 
 func TestCheckNonZeroExit(t *testing.T) {
 	r := New(fakeBin(t, "boom", 1))
-	if _, err := r.Check("in.csv", "rules.yaml"); err == nil {
+	if _, err := r.Check(context.Background(), "in.csv", "rules.yaml"); err == nil {
 		t.Error("expected error on non-zero exit")
 	}
 }
 
 func TestCheckBadJSON(t *testing.T) {
 	r := New(fakeBin(t, "not json", 0))
-	if _, err := r.Check("in.csv", "rules.yaml"); err == nil {
+	if _, err := r.Check(context.Background(), "in.csv", "rules.yaml"); err == nil {
 		t.Error("expected error on invalid json")
 	}
 }
@@ -73,14 +74,14 @@ func TestNewDefaultsBin(t *testing.T) {
 func TestCheckRejectsRelativeBin(t *testing.T) {
 	// 相対パスの Bin は PATH ハイジャック防止のため実行前にエラーになること。
 	r := &Runner{Bin: "dataguard-engine"}
-	if _, err := r.Check("in.csv", "rules.yaml"); err == nil {
+	if _, err := r.Check(context.Background(), "in.csv", "rules.yaml"); err == nil {
 		t.Error("expected error when Bin is not an absolute path")
 	}
 }
 
 func TestAnalyzeRejectsRelativeBin(t *testing.T) {
 	r := &Runner{Bin: "dataguard-engine"}
-	if _, err := r.Analyze("schema.sql"); err == nil {
+	if _, err := r.Analyze(context.Background(), "schema.sql"); err == nil {
 		t.Error("expected error when Bin is not an absolute path")
 	}
 }

@@ -4,6 +4,7 @@ package engine
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -31,8 +32,6 @@ type Runner struct {
 }
 
 // New は Runner を返す。bin は絶対パスでなければならない。
-// 空文字列を渡した場合は DefaultBin を使うが、絶対パスでないためエラーになる。
-// 実行前に run() 内で filepath.IsAbs を検証する。
 func New(bin string) *Runner {
 	if bin == "" {
 		bin = DefaultBin
@@ -42,8 +41,8 @@ func New(bin string) *Runner {
 
 // Check は `dataguard-engine check --input <csv> --rules <yaml> --out -` を実行し、
 // stdout の violations JSON をパースして返す。
-func (r *Runner) Check(inputCSV, rulesPath string) ([]Violation, error) {
-	out, err := r.run("check", "--input", inputCSV, "--rules", rulesPath, "--out", "-")
+func (r *Runner) Check(ctx context.Context, inputCSV, rulesPath string) ([]Violation, error) {
+	out, err := r.run(ctx, "check", "--input", inputCSV, "--rules", rulesPath, "--out", "-")
 	if err != nil {
 		return nil, err
 	}
@@ -56,8 +55,8 @@ func (r *Runner) Check(inputCSV, rulesPath string) ([]Violation, error) {
 
 // Analyze は `dataguard-engine analyze --sql <file> --out -` を実行し、
 // lineage JSON をそのまま返す (Go 側で構造を固定しないため RawMessage)。
-func (r *Runner) Analyze(sqlPath string) (json.RawMessage, error) {
-	out, err := r.run("analyze", "--sql", sqlPath, "--out", "-")
+func (r *Runner) Analyze(ctx context.Context, sqlPath string) (json.RawMessage, error) {
+	out, err := r.run(ctx, "analyze", "--sql", sqlPath, "--out", "-")
 	if err != nil {
 		return nil, err
 	}
@@ -65,12 +64,13 @@ func (r *Runner) Analyze(sqlPath string) (json.RawMessage, error) {
 }
 
 // run はサブプロセスを実行し stdout を返す。非ゼロ終了時は stderr を含めてエラー化する。
-// PATH ハイジャック防止のため、Bin は絶対パスでなければならない。
-func (r *Runner) run(args ...string) ([]byte, error) {
+// PATH ハイジャック防止のため Bin は絶対パスでなければならない。
+// ctx がキャンセルされると exec.CommandContext がサブプロセスを Kill する。
+func (r *Runner) run(ctx context.Context, args ...string) ([]byte, error) {
 	if !filepath.IsAbs(r.Bin) {
 		return nil, fmt.Errorf("engine: Bin %q は絶対パスでなければなりません (PATH ハイジャック防止)", r.Bin)
 	}
-	cmd := exec.Command(r.Bin, args...)
+	cmd := exec.CommandContext(ctx, r.Bin, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

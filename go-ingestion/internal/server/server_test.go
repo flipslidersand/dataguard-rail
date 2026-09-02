@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -24,7 +25,9 @@ func (f *fakeStore) ListDiffs() ([]store.SchemaDiff, error)         { return f.d
 // fakeRunner はテスト用の Runner 実装。
 type fakeRunner struct{ payload json.RawMessage }
 
-func (f *fakeRunner) Analyze(_ string) (json.RawMessage, error) { return f.payload, nil }
+func (f *fakeRunner) Analyze(_ context.Context, _ string) (json.RawMessage, error) {
+	return f.payload, nil
+}
 
 func newTestServer(st Storer, runner Runner) *Server {
 	return New(st, runner, nil)

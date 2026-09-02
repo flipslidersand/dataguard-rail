@@ -10,7 +10,7 @@ import (
 )
 
 func TestRegisterInvalidCron(t *testing.T) {
-	s := New(nil)
+	s := New(context.Background(), nil)
 	src := config.DataSource{Name: "x", Schedule: "not-a-cron"}
 	if err := s.Register(src, func(_ context.Context, _ config.DataSource) error { return nil }); err == nil {
 		t.Error("expected error for invalid cron expression")
@@ -18,7 +18,7 @@ func TestRegisterInvalidCron(t *testing.T) {
 }
 
 func TestRegisterEmptyScheduleSkips(t *testing.T) {
-	s := New(nil)
+	s := New(context.Background(), nil)
 	src := config.DataSource{Name: "x", Schedule: ""}
 	if err := s.Register(src, func(_ context.Context, _ config.DataSource) error { return nil }); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -29,7 +29,7 @@ func TestRegisterEmptyScheduleSkips(t *testing.T) {
 }
 
 func TestHasJobsAfterRegister(t *testing.T) {
-	s := New(nil)
+	s := New(context.Background(), nil)
 	src := config.DataSource{Name: "x", Schedule: "@every 1h"}
 	if err := s.Register(src, func(_ context.Context, _ config.DataSource) error { return nil }); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -41,8 +41,8 @@ func TestHasJobsAfterRegister(t *testing.T) {
 
 func TestScheduledJobFires(t *testing.T) {
 	var count atomic.Int32
-	s := New(nil)
-	src := config.DataSource{Name: "x", Schedule: "@every 100ms"}
+	s := New(context.Background(), nil)
+	src := config.DataSource{Name: "x", Schedule: "@every 500ms"}
 	if err := s.Register(src, func(_ context.Context, _ config.DataSource) error {
 		count.Add(1)
 		return nil

@@ -2,6 +2,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -20,7 +21,7 @@ type Storer interface {
 
 // Runner は Rust engine の呼び出しを抽象化する。
 type Runner interface {
-	Analyze(sqlPath string) (json.RawMessage, error)
+	Analyze(ctx context.Context, sqlPath string) (json.RawMessage, error)
 }
 
 // Server は HTTP サーバーの依存セットを保持する。

@@ -32,8 +32,8 @@ func (g *GrpcRunner) Close() error {
 }
 
 // Analyze は Rust engine の analyze RPC を呼び出し、リネージュ JSON を返す。
-func (g *GrpcRunner) Analyze(sqlPath string) (json.RawMessage, error) {
-	resp, err := g.client.Analyze(context.Background(), &pb.AnalyzeRequest{SqlPath: sqlPath})
+func (g *GrpcRunner) Analyze(ctx context.Context, sqlPath string) (json.RawMessage, error) {
+	resp, err := g.client.Analyze(ctx, &pb.AnalyzeRequest{SqlPath: sqlPath})
 	if err != nil {
 		return nil, fmt.Errorf("grpc Analyze: %w", err)
 	}
@@ -41,8 +41,8 @@ func (g *GrpcRunner) Analyze(sqlPath string) (json.RawMessage, error) {
 }
 
 // Check は Rust engine の check RPC を呼び出し、violations を返す。
-func (g *GrpcRunner) Check(csvPath, rulesPath string) ([]Violation, error) {
-	resp, err := g.client.Check(context.Background(), &pb.CheckRequest{
+func (g *GrpcRunner) Check(ctx context.Context, csvPath, rulesPath string) ([]Violation, error) {
+	resp, err := g.client.Check(ctx, &pb.CheckRequest{
 		CsvPath:   csvPath,
 		RulesPath: rulesPath,
 	})

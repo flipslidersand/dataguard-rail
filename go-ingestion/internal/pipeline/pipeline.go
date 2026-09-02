@@ -16,7 +16,7 @@ import (
 
 // Checker は品質チェックの実行者 (engine.Runner が満たす)。テストで差し替え可能。
 type Checker interface {
-	Check(inputCSV, rulesPath string) ([]engine.Violation, error)
+	Check(ctx context.Context, inputCSV, rulesPath string) ([]engine.Violation, error)
 }
 
 // Saver は violations の永続化先 (store.Store が満たす)。
@@ -95,7 +95,7 @@ func process(ctx context.Context, src config.DataSource, rulesPath, tmpDir strin
 	}
 	defer cleanup()
 
-	violations, err := chk.Check(csvPath, rulesPath)
+	violations, err := chk.Check(ctx, csvPath, rulesPath)
 	if err != nil {
 		return 0, err
 	}
