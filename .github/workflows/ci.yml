@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [master]
 
+# Runner resolution: vars.GATE_RUNNER is set at the org level (linux-general).
+# Do NOT set a repo-level GATE_RUNNER — it overrides the org value and can cause
+# CI to queue indefinitely if that runner label has no available agents.
+# Incident reference: #73 (2026-08-27, 2h queue caused by repo var arc-dev-nodee)
 jobs:
   rust:
     name: Rust tests
