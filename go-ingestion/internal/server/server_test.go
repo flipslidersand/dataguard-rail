@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -19,6 +20,18 @@ type fakeStore struct {
 }
 
 func (f *fakeStore) ListViolations() ([]engine.Violation, error) { return f.violations, nil }
+func (f *fakeStore) CountViolations() (int, error)               { return len(f.violations), nil }
+func (f *fakeStore) ListViolationsPaged(limit, offset int) ([]engine.Violation, error) {
+	all := f.violations
+	if offset >= len(all) {
+		return []engine.Violation{}, nil
+	}
+	end := offset + limit
+	if limit <= 0 || end > len(all) {
+		end = len(all)
+	}
+	return all[offset:end], nil
+}
 func (f *fakeStore) LatestDiff(_ string) (*store.SchemaDiff, error) { return f.diff, nil }
 func (f *fakeStore) ListDiffs() ([]store.SchemaDiff, error)         { return f.diffs, nil }
 
@@ -81,6 +94,51 @@ func TestViolationsFilter(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &got)
 	if len(got) != 1 || got[0].Table != "products" {
 		t.Errorf("unexpected filter result: %+v", got)
+	}
+}
+
+func TestViolationsPagination(t *testing.T) {
+	viols := make([]engine.Violation, 5)
+	for i := range viols {
+		viols[i] = engine.Violation{ID: fmt.Sprintf("v%d", i), Table: "t"}
+	}
+	st := &fakeStore{violations: viols}
+	srv := newTestServer(st, &fakeRunner{})
+
+	// limit=2&offset=1 → v1,v2
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/violations?limit=2&offset=1", nil)
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", w.Code)
+	}
+	if w.Header().Get("X-Total-Count") != "5" {
+		t.Errorf("X-Total-Count: want 5, got %s", w.Header().Get("X-Total-Count"))
+	}
+	var got []engine.Violation
+	_ = json.Unmarshal(w.Body.Bytes(), &got)
+	if len(got) != 2 {
+		t.Errorf("want 2, got %d", len(got))
+	}
+}
+
+func TestViolationsPaginationInvalidLimit(t *testing.T) {
+	srv := newTestServer(&fakeStore{}, &fakeRunner{})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/violations?limit=abc", nil)
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", w.Code)
+	}
+}
+
+func TestViolationsPaginationExceedMaxLimit(t *testing.T) {
+	srv := newTestServer(&fakeStore{}, &fakeRunner{})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/violations?limit=9999", nil)
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", w.Code)
 	}
 }
 

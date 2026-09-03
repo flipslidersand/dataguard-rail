@@ -15,6 +15,8 @@ import (
 // Storer は violations / schema の読み書きを抽象化する。テストで差し替え可能。
 type Storer interface {
 	ListViolations() ([]engine.Violation, error)
+	ListViolationsPaged(limit, offset int) ([]engine.Violation, error)
+	CountViolations() (int, error)
 	LatestDiff(table string) (*store.SchemaDiff, error)
 	ListDiffs() ([]store.SchemaDiff, error)
 }
