@@ -56,7 +56,9 @@ pub fn analyze(sql: &str) -> Result<LineageReport> {
         // テーブルノードを graph に追加
         for tbl in sl.sources.iter().chain(sl.target.iter()) {
             let t = tbl.to_lowercase();
-            node_index.entry(t.clone()).or_insert_with(|| graph.add_node(t));
+            node_index
+                .entry(t.clone())
+                .or_insert_with(|| graph.add_node(t));
         }
         // エッジ: source → target
         if let Some(ref target) = sl.target {
@@ -73,10 +75,7 @@ pub fn analyze(sql: &str) -> Result<LineageReport> {
         statement_lineages.push(sl);
     }
 
-    let tables: Vec<String> = graph
-        .node_indices()
-        .map(|i| graph[i].clone())
-        .collect();
+    let tables: Vec<String> = graph.node_indices().map(|i| graph[i].clone()).collect();
 
     let edges: Vec<LineageEdge> = graph
         .edge_indices()
@@ -89,7 +88,11 @@ pub fn analyze(sql: &str) -> Result<LineageReport> {
         })
         .collect();
 
-    Ok(LineageReport { tables, edges, statements: statement_lineages })
+    Ok(LineageReport {
+        tables,
+        edges,
+        statements: statement_lineages,
+    })
 }
 
 fn analyze_statement(stmt: &Statement) -> StatementLineage {
@@ -106,7 +109,11 @@ fn analyze_statement(stmt: &Statement) -> StatementLineage {
                 sql_ref,
             }
         }
-        Statement::CreateTable { name, query: Some(q), .. } => {
+        Statement::CreateTable {
+            name,
+            query: Some(q),
+            ..
+        } => {
             let target = name.to_string();
             let sources = collect_query_sources(q);
             let columns = collect_select_columns(q);
@@ -183,7 +190,9 @@ fn extract_table_factor(factor: &TableFactor, tables: &mut Vec<String>) {
         TableFactor::Derived { subquery, .. } => {
             collect_set_expr_sources(&subquery.body, tables);
         }
-        TableFactor::NestedJoin { table_with_joins, .. } => {
+        TableFactor::NestedJoin {
+            table_with_joins, ..
+        } => {
             collect_table_with_joins(table_with_joins, tables);
         }
         _ => {}
@@ -206,7 +215,11 @@ fn collect_select_columns(q: &Query) -> Vec<ColumnRef> {
                     }
                 }
                 SelectItem::Wildcard(_) => {
-                    cols.push(ColumnRef { source_table: None, source_column: "*".into(), alias: None });
+                    cols.push(ColumnRef {
+                        source_table: None,
+                        source_column: "*".into(),
+                        alias: None,
+                    });
                 }
                 _ => {}
             }

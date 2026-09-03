@@ -1,10 +1,10 @@
 mod check;
 mod grpc;
 mod lineage;
-mod profile;
 #[cfg(test)]
 #[path = "lineage_test.rs"]
 mod lineage_test;
+mod profile;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -123,7 +123,9 @@ async fn run_serve(addr: String) -> Result<()> {
     use grpc::DataGuardService;
     use tonic::transport::Server;
 
-    let addr_parsed = addr.parse().with_context(|| format!("invalid addr: {addr}"))?;
+    let addr_parsed = addr
+        .parse()
+        .with_context(|| format!("invalid addr: {addr}"))?;
     eprintln!("gRPC server listening on {addr}");
 
     Server::builder()

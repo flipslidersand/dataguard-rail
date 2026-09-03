@@ -73,7 +73,12 @@ fn build_report(
     }
 }
 
-fn profile_column(name: &str, col_idx: usize, records: &[Vec<String>], row_count: usize) -> ColumnProfile {
+fn profile_column(
+    name: &str,
+    col_idx: usize,
+    records: &[Vec<String>],
+    row_count: usize,
+) -> ColumnProfile {
     let mut null_count = 0usize;
     let mut uniques: HashSet<&str> = HashSet::new();
     let mut nums: Vec<f64> = Vec::new();
@@ -134,10 +139,7 @@ mod tests {
 
     #[test]
     fn numeric_column_stats() {
-        let report = make_report(
-            vec!["price"],
-            vec![vec!["10"], vec!["20"], vec!["30"]],
-        );
+        let report = make_report(vec!["price"], vec![vec!["10"], vec!["20"], vec!["30"]]);
         let col = &report.columns[0];
         assert_eq!(col.null_count, 0);
         assert_eq!(col.unique_count, 3);
@@ -161,10 +163,7 @@ mod tests {
 
     #[test]
     fn mixed_column_no_numeric_stats() {
-        let report = make_report(
-            vec!["code"],
-            vec![vec!["A1"], vec!["42"], vec!["B2"]],
-        );
+        let report = make_report(vec!["code"], vec![vec!["A1"], vec!["42"], vec!["B2"]]);
         let col = &report.columns[0];
         // "A1" は数値でないので min/max/mean = None
         assert!(col.min.is_none());
@@ -194,8 +193,8 @@ mod tests {
         assert_eq!(report.columns[0].null_count, 0); // id
         assert_eq!(report.columns[1].null_count, 1); // name
         assert_eq!(report.columns[2].null_count, 1); // score
-        // score: 2 non-null but only 1 row has parseable num if "" counts as null
-        // "90" and "80" are both numeric, "" is null → nums.len()==2 == non_null==2
+                                                     // score: 2 non-null but only 1 row has parseable num if "" counts as null
+                                                     // "90" and "80" are both numeric, "" is null → nums.len()==2 == non_null==2
         assert_eq!(report.columns[2].min, Some(80.0));
         assert_eq!(report.columns[2].max, Some(90.0));
     }
