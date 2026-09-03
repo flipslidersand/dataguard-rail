@@ -8,7 +8,9 @@ mod tests {
         assert!(report.tables.contains(&"customers".to_string()));
         assert_eq!(report.statements.len(), 1);
         assert_eq!(report.statements[0].kind, "SELECT");
-        assert!(report.statements[0].sources.contains(&"customers".to_string()));
+        assert!(report.statements[0]
+            .sources
+            .contains(&"customers".to_string()));
     }
 
     #[test]
@@ -16,8 +18,16 @@ mod tests {
         let sql = "SELECT o.id, c.name FROM orders o JOIN customers c ON o.customer_id = c.id";
         let report = analyze(sql).unwrap();
         let tables: Vec<&str> = report.tables.iter().map(|s| s.as_str()).collect();
-        assert!(tables.contains(&"orders"), "expected orders in {:?}", tables);
-        assert!(tables.contains(&"customers"), "expected customers in {:?}", tables);
+        assert!(
+            tables.contains(&"orders"),
+            "expected orders in {:?}",
+            tables
+        );
+        assert!(
+            tables.contains(&"customers"),
+            "expected customers in {:?}",
+            tables
+        );
     }
 
     #[test]
@@ -45,8 +55,16 @@ mod tests {
         let report = analyze(sql).unwrap();
         let cols = &report.statements[0].columns;
         let col_names: Vec<&str> = cols.iter().map(|c| c.source_column.as_str()).collect();
-        assert!(col_names.contains(&"amount"), "expected amount in {:?}", col_names);
-        assert!(col_names.contains(&"name"), "expected name in {:?}", col_names);
+        assert!(
+            col_names.contains(&"amount"),
+            "expected amount in {:?}",
+            col_names
+        );
+        assert!(
+            col_names.contains(&"name"),
+            "expected name in {:?}",
+            col_names
+        );
         let name_col = cols.iter().find(|c| c.source_column == "name").unwrap();
         assert_eq!(name_col.alias.as_deref(), Some("customer_name"));
     }

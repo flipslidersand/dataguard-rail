@@ -25,9 +25,7 @@ impl DataGuard for DataGuardService {
         {
             use std::path::{Component, Path};
             let p = Path::new(&sql_path);
-            let has_parent_dir = p
-                .components()
-                .any(|c| c == Component::ParentDir);
+            let has_parent_dir = p.components().any(|c| c == Component::ParentDir);
             let has_sql_ext = p
                 .extension()
                 .map(|e| e.eq_ignore_ascii_case("sql"))
@@ -41,11 +39,10 @@ impl DataGuard for DataGuardService {
             .with_context(|| format!("cannot read {sql_path}"))
             .map_err(|e| Status::invalid_argument(e.to_string()))?;
 
-        let report = lineage::analyze(&sql_text)
-            .map_err(|e| Status::internal(e.to_string()))?;
+        let report = lineage::analyze(&sql_text).map_err(|e| Status::internal(e.to_string()))?;
 
-        let lineage_json = serde_json::to_string(&report)
-            .map_err(|e| Status::internal(e.to_string()))?;
+        let lineage_json =
+            serde_json::to_string(&report).map_err(|e| Status::internal(e.to_string()))?;
 
         Ok(Response::new(AnalyzeResponse { lineage_json }))
     }
@@ -60,8 +57,8 @@ impl DataGuard for DataGuardService {
         let violations = check::check_file(&req.csv_path, &req.rules_path, &detected_at)
             .map_err(|e| Status::internal(e.to_string()))?;
 
-        let violations_json = serde_json::to_string(&violations)
-            .map_err(|e| Status::internal(e.to_string()))?;
+        let violations_json =
+            serde_json::to_string(&violations).map_err(|e| Status::internal(e.to_string()))?;
 
         Ok(Response::new(CheckResponse { violations_json }))
     }

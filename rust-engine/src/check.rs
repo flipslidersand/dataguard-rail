@@ -334,13 +334,28 @@ mod tests {
         let v = evaluate(&headers, &records, &rules, "t", "T").unwrap();
         assert_eq!(v.len(), 2);
         // IDs contain a unix-ms prefix to be unique across runs: viol-{ms}-{seq}
-        assert!(v[0].id.starts_with("viol-"), "expected viol- prefix, got {}", v[0].id);
-        assert!(v[0].id.ends_with("-1"), "expected seq suffix -1, got {}", v[0].id);
-        assert!(v[1].id.ends_with("-2"), "expected seq suffix -2, got {}", v[1].id);
+        assert!(
+            v[0].id.starts_with("viol-"),
+            "expected viol- prefix, got {}",
+            v[0].id
+        );
+        assert!(
+            v[0].id.ends_with("-1"),
+            "expected seq suffix -1, got {}",
+            v[0].id
+        );
+        assert!(
+            v[1].id.ends_with("-2"),
+            "expected seq suffix -2, got {}",
+            v[1].id
+        );
         // IDs within the same run share the same timestamp prefix
         let prefix0 = v[0].id.trim_end_matches("-1");
         let prefix1 = v[1].id.trim_end_matches("-2");
-        assert_eq!(prefix0, prefix1, "same-run IDs should share timestamp prefix");
+        assert_eq!(
+            prefix0, prefix1,
+            "same-run IDs should share timestamp prefix"
+        );
         assert_eq!(v[0].rule, "positive_price");
         assert_eq!(v[1].rule, "no_null_email");
     }
@@ -375,7 +390,12 @@ mod tests {
     fn matches_flags_non_conforming() {
         let headers = vec!["code".into()];
         let records = rows(&[&["AB1234"], &["ab1234"], &["X9"], &["CD5678"]]);
-        let rules = vec![raw("valid_code", Some("code"), None, r"matches /^[A-Z]{2}[0-9]{4}$/")];
+        let rules = vec![raw(
+            "valid_code",
+            Some("code"),
+            None,
+            r"matches /^[A-Z]{2}[0-9]{4}$/",
+        )];
         let v = evaluate(&headers, &records, &rules, "t", "T").unwrap();
         assert_eq!(v.len(), 2);
         assert_eq!(v[0].value, "ab1234");
@@ -386,7 +406,12 @@ mod tests {
     fn matches_empty_cell_is_violation() {
         let headers = vec!["email".into()];
         let records = rows(&[&["user@example.com"], &[""], &["notanemail"]]);
-        let rules = vec![raw("valid_email", Some("email"), None, r"matches /^[^@]+@[^@]+\.[^@]+$/")];
+        let rules = vec![raw(
+            "valid_email",
+            Some("email"),
+            None,
+            r"matches /^[^@]+@[^@]+\.[^@]+$/",
+        )];
         let v = evaluate(&headers, &records, &rules, "t", "T").unwrap();
         assert_eq!(v.len(), 2);
     }
