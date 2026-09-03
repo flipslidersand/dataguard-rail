@@ -41,7 +41,7 @@ func (DefaultLoader) Load(ctx context.Context, src config.DataSource) (*ingester
 	case config.JSONL:
 		return ingester.LoadJSONL(src.Path)
 	case config.Postgres:
-		return ingester.LoadPostgres(ctx, src.DSN, src.Query)
+		return ingester.LoadPostgres(ctx, src.DSN, src.Query, src.EffectiveQueryTimeout())
 	default:
 		return nil, fmt.Errorf("未対応の source type %q", src.Type)
 	}
