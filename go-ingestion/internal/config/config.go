@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
@@ -21,14 +22,26 @@ const (
 	Postgres SourceType = "postgres"
 )
 
+// DefaultQueryTimeout は QueryTimeout 未指定時のデフォルト値。
+const DefaultQueryTimeout = 30 * time.Second
+
 // DataSource は 1 つの取込み元定義 (data-model.md の DataSource)。
 type DataSource struct {
-	Name     string     `yaml:"name"`
-	Type     SourceType `yaml:"type"`
-	Path     string     `yaml:"path"`     // csv 用
-	DSN      string     `yaml:"dsn"`      // postgres 用
-	Query    string     `yaml:"query"`    // postgres 用
-	Schedule string     `yaml:"schedule"` // cron (Phase 3 では未使用)
+	Name         string        `yaml:"name"`
+	Type         SourceType    `yaml:"type"`
+	Path         string        `yaml:"path"`          // csv 用
+	DSN          string        `yaml:"dsn"`           // postgres 用
+	Query        string        `yaml:"query"`         // postgres 用
+	Schedule     string        `yaml:"schedule"`      // cron
+	QueryTimeout time.Duration `yaml:"query_timeout"` // postgres クエリタイムアウト (デフォルト 30s)
+}
+
+// EffectiveQueryTimeout は設定値、未設定なら DefaultQueryTimeout を返す。
+func (d *DataSource) EffectiveQueryTimeout() time.Duration {
+	if d.QueryTimeout > 0 {
+		return d.QueryTimeout
+	}
+	return DefaultQueryTimeout
 }
 
 // Config は sources.yaml のトップレベル。

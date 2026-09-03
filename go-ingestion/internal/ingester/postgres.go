@@ -3,10 +3,15 @@ package ingester
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
+
+// MaxPostgresRows は rowsToDataset が許容する最大行数。
+// これを超えると OOM リスクがあるためエラーにする。
+const MaxPostgresRows = 100_000
 
 // queryRows は pgx.Rows の必要部分を抽象化したもの。DB 無しで rowsToDataset を
 // 単体テストできるようにするための interface。
@@ -18,7 +23,11 @@ type queryRows interface {
 }
 
 // LoadPostgres は dsn へ接続し query を実行、結果を Dataset に変換する。
-func LoadPostgres(ctx context.Context, dsn, query string) (*Dataset, error) {
+// timeout でクエリ全体にタイムアウトを設定する。
+func LoadPostgres(ctx context.Context, dsn, query string, timeout time.Duration) (*Dataset, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	conn, err := pgx.Connect(ctx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("connect postgres: %w", err)
@@ -45,6 +54,9 @@ func rowsToDataset(rows queryRows) (*Dataset, error) {
 
 	var data [][]string
 	for rows.Next() {
+		if len(data) >= MaxPostgresRows {
+			return nil, fmt.Errorf("postgres: 行数が上限 %d を超えました。クエリに LIMIT を追加してください", MaxPostgresRows)
+		}
 		vals, err := rows.Values()
 		if err != nil {
 			return nil, fmt.Errorf("read row: %w", err)

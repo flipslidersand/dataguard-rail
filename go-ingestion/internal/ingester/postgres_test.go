@@ -2,6 +2,8 @@ package ingester
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -74,6 +76,18 @@ func TestRowsToDatasetError(t *testing.T) {
 	rows := &fakeRows{fields: []string{"id"}, data: [][]any{{1}}, err: errors.New("boom")}
 	if _, err := rowsToDataset(rows); err == nil {
 		t.Error("expected error propagation")
+	}
+}
+
+func TestRowsToDatasetMaxRows(t *testing.T) {
+	data := make([][]any, MaxPostgresRows+1)
+	for i := range data {
+		data[i] = []any{fmt.Sprintf("row%d", i)}
+	}
+	rows := &fakeRows{fields: []string{"id"}, data: data}
+	_, err := rowsToDataset(rows)
+	if err == nil || !strings.Contains(err.Error(), "上限") {
+		t.Errorf("expected max rows error, got: %v", err)
 	}
 }
 
