@@ -32,7 +32,73 @@ pub struct ColumnProfile {
     pub mean: Option<f64>,
 }
 
-/// CSV ファイルを読み込んでプロファイルレポートを返す。
+/// 1 カラムぶんの統計を 1 パスで積み上げるアキュムレータ。
+/// 行データそのものは保持しないため、メモリ使用量はユニーク値の distinct 数に比例する
+/// (全行を `Vec` に展開する旧実装は行数に比例し、大容量 CSV で OOM の原因になっていた)。
+#[derive(Debug, Default, Clone)]
+struct ColumnAcc {
+    null_count: usize,
+    uniques: HashSet<String>,
+    numeric_count: usize,
+    non_null_count: usize,
+    min: f64,
+    max: f64,
+    sum: f64,
+}
+
+impl ColumnAcc {
+    fn update(&mut self, cell: &str) {
+        let trimmed = cell.trim();
+        if trimmed.is_empty() {
+            self.null_count += 1;
+            return;
+        }
+        self.non_null_count += 1;
+        self.uniques.insert(cell.to_string());
+        if let Ok(v) = trimmed.parse::<f64>() {
+            if self.numeric_count == 0 {
+                self.min = v;
+                self.max = v;
+            } else {
+                self.min = self.min.min(v);
+                self.max = self.max.max(v);
+            }
+            self.sum += v;
+            self.numeric_count += 1;
+        }
+    }
+
+    fn finish(self, name: &str, row_count: usize) -> ColumnProfile {
+        let null_rate = if row_count > 0 {
+            self.null_count as f64 / row_count as f64
+        } else {
+            0.0
+        };
+        // 全ての非 null セルが数値として解釈できた場合のみ数値統計を出力
+        let (min, max, mean) =
+            if self.non_null_count > 0 && self.numeric_count == self.non_null_count {
+                (
+                    Some(self.min),
+                    Some(self.max),
+                    Some(self.sum / self.numeric_count as f64),
+                )
+            } else {
+                (None, None, None)
+            };
+
+        ColumnProfile {
+            name: name.to_string(),
+            null_count: self.null_count,
+            null_rate,
+            unique_count: self.uniques.len(),
+            min,
+            max,
+            mean,
+        }
+    }
+}
+
+/// CSV ファイルを読み込んでプロファイルレポートを返す (1 パスストリーミング)。
 pub fn profile_file(input: &str, profiled_at: &str) -> Result<ProfileReport> {
     let table = Path::new(input)
         .file_stem()
@@ -43,15 +109,34 @@ pub fn profile_file(input: &str, profiled_at: &str) -> Result<ProfileReport> {
     let mut reader =
         csv::Reader::from_path(input).with_context(|| format!("failed to open CSV: {input}"))?;
     let headers: Vec<String> = reader.headers()?.iter().map(|s| s.to_string()).collect();
-    let records: Vec<Vec<String>> = reader
-        .records()
-        .map(|r| r.map(|rec| rec.iter().map(|s| s.to_string()).collect()))
-        .collect::<std::result::Result<_, _>>()
-        .context("failed to read CSV records")?;
 
-    Ok(build_report(headers, records, table, profiled_at))
+    let mut accs: Vec<ColumnAcc> = vec![ColumnAcc::default(); headers.len()];
+    let mut row_count = 0usize;
+    for result in reader.records() {
+        let rec = result.context("failed to read CSV records")?;
+        row_count += 1;
+        for (col_idx, acc) in accs.iter_mut().enumerate() {
+            let cell = rec.get(col_idx).unwrap_or("");
+            acc.update(cell);
+        }
+    }
+
+    let columns = headers
+        .iter()
+        .zip(accs)
+        .map(|(name, acc)| acc.finish(name, row_count))
+        .collect();
+
+    Ok(ProfileReport {
+        table,
+        profiled_at: profiled_at.to_string(),
+        row_count,
+        columns,
+    })
 }
 
+/// インメモリ版レポート構築 (テスト専用ヘルパー)。本番経路は `profile_file` を使用する。
+#[cfg(test)]
 fn build_report(
     headers: Vec<String>,
     records: Vec<Vec<String>>,
@@ -59,10 +144,18 @@ fn build_report(
     profiled_at: &str,
 ) -> ProfileReport {
     let row_count = records.len();
+    let mut accs: Vec<ColumnAcc> = vec![ColumnAcc::default(); headers.len()];
+    for rec in &records {
+        for (col_idx, acc) in accs.iter_mut().enumerate() {
+            let cell = rec.get(col_idx).map(|s| s.as_str()).unwrap_or("");
+            acc.update(cell);
+        }
+    }
+
     let columns = headers
         .iter()
-        .enumerate()
-        .map(|(col_idx, name)| profile_column(name, col_idx, &records, row_count))
+        .zip(accs)
+        .map(|(name, acc)| acc.finish(name, row_count))
         .collect();
 
     ProfileReport {
@@ -70,57 +163,6 @@ fn build_report(
         profiled_at: profiled_at.to_string(),
         row_count,
         columns,
-    }
-}
-
-fn profile_column(
-    name: &str,
-    col_idx: usize,
-    records: &[Vec<String>],
-    row_count: usize,
-) -> ColumnProfile {
-    let mut null_count = 0usize;
-    let mut uniques: HashSet<&str> = HashSet::new();
-    let mut nums: Vec<f64> = Vec::new();
-
-    for rec in records {
-        let cell = rec.get(col_idx).map(|s| s.as_str()).unwrap_or("");
-        if cell.trim().is_empty() {
-            null_count += 1;
-        } else {
-            uniques.insert(cell);
-            if let Ok(v) = cell.trim().parse::<f64>() {
-                nums.push(v);
-            }
-        }
-    }
-
-    let null_rate = if row_count > 0 {
-        null_count as f64 / row_count as f64
-    } else {
-        0.0
-    };
-    let unique_count = uniques.len();
-
-    // 全ての非 null セルが数値として解釈できた場合のみ数値統計を出力
-    let non_null = row_count - null_count;
-    let (min, max, mean) = if non_null > 0 && nums.len() == non_null {
-        let mn = nums.iter().cloned().fold(f64::INFINITY, f64::min);
-        let mx = nums.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        let avg = nums.iter().sum::<f64>() / nums.len() as f64;
-        (Some(mn), Some(mx), Some(avg))
-    } else {
-        (None, None, None)
-    };
-
-    ColumnProfile {
-        name: name.to_string(),
-        null_count,
-        null_rate,
-        unique_count,
-        min,
-        max,
-        mean,
     }
 }
 
@@ -135,6 +177,36 @@ mod tests {
             .map(|row| row.into_iter().map(|s| s.to_string()).collect())
             .collect();
         build_report(h, r, "test".to_string(), "T")
+    }
+
+    /// テスト用に一意なパスへ内容を書き込む (tempfile crate に依存しない簡易実装)。
+    fn write_temp(name: &str, content: &str) -> String {
+        let path = std::env::temp_dir().join(format!(
+            "dataguard-profile-test-{}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+            name
+        ));
+        std::fs::write(&path, content).unwrap();
+        path.to_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn profile_file_streams_same_result_as_build_report() {
+        let csv = "id,score\n1,90\n2,\n3,80\n";
+        let path = write_temp("input.csv", csv);
+        let got = profile_file(&path, "T").unwrap();
+        std::fs::remove_file(&path).ok();
+
+        assert_eq!(got.row_count, 3);
+        let score = got.columns.iter().find(|c| c.name == "score").unwrap();
+        assert_eq!(score.null_count, 1);
+        assert_eq!(score.min, Some(80.0));
+        assert_eq!(score.max, Some(90.0));
+        assert_eq!(score.mean, Some(85.0));
     }
 
     #[test]
