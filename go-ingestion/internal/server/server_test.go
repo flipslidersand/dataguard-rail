@@ -43,7 +43,11 @@ func (f *fakeRunner) Analyze(_ context.Context, _ string) (json.RawMessage, erro
 }
 
 func newTestServer(st Storer, runner Runner) *Server {
-	return New(st, runner, nil)
+	return New(st, runner, nil, "")
+}
+
+func newAuthedTestServer(st Storer, runner Runner, apiKey string) *Server {
+	return New(st, runner, nil, apiKey)
 }
 
 func TestHealth(t *testing.T) {
@@ -214,6 +218,50 @@ func TestDashboard(t *testing.T) {
 	body := w.Body.String()
 	if !containsAll(body, "DataGuard Rail", "/api/violations", "/api/schema-diff") {
 		t.Error("dashboard HTML missing expected content")
+	}
+}
+
+func TestAuthMissingToken(t *testing.T) {
+	srv := newAuthedTestServer(&fakeStore{}, &fakeRunner{}, "secret")
+	for _, path := range []string{"/", "/api/violations"} {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, path, nil)
+		srv.Handler().ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("%s: want 401, got %d", path, w.Code)
+		}
+	}
+}
+
+func TestAuthWrongToken(t *testing.T) {
+	srv := newAuthedTestServer(&fakeStore{}, &fakeRunner{}, "secret")
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/violations", nil)
+	req.Header.Set("Authorization", "Bearer wrong")
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401, got %d", w.Code)
+	}
+}
+
+func TestAuthCorrectToken(t *testing.T) {
+	srv := newAuthedTestServer(&fakeStore{}, &fakeRunner{}, "secret")
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/violations", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", w.Code)
+	}
+}
+
+func TestAuthHealthAlwaysOpen(t *testing.T) {
+	srv := newAuthedTestServer(&fakeStore{}, &fakeRunner{}, "secret")
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/health", nil)
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", w.Code)
 	}
 }
 

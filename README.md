@@ -123,9 +123,13 @@ dataguard ingest --daemon \
 ### REST API + Web UI
 
 ```bash
-dataguard serve --addr :8080 --db data/violations
-# Open / ブラウザで http://localhost:8080/
+dataguard serve --addr :8080 --db data/violations --api-key "$(gopass show -o infra/dataguard-rail/api-key)"
+# Open / ブラウザで http://localhost:8080/ （Authorization: Bearer <api-key> が必要）
+curl -H "Authorization: Bearer $API_KEY" http://localhost:8080/api/violations
 ```
+
+`--api-key` を指定しない場合、`/` と `/api/*` は認証なしで公開される（ローカル開発専用。本番運用では必須）。
+`/health` は監視用に常に認証不要。
 
 ### SQL Lineage Analysis / SQL リネージュ解析
 

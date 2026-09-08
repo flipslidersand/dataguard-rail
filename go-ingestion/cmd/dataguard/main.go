@@ -210,6 +210,7 @@ func newServeCmd() *cobra.Command {
 		dbPath    string
 		engineBin string
 		grpcAddr  string
+		apiKey    string
 	)
 	cmd := &cobra.Command{
 		Use:   "serve",
@@ -217,7 +218,7 @@ func newServeCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			otelEndpoint, _ := cmd.Root().PersistentFlags().GetString("otel-endpoint")
 			slackWebhook, _ := cmd.Root().PersistentFlags().GetString("slack-webhook")
-			return runServe(addr, dbPath, engineBin, grpcAddr, otelEndpoint, slackWebhook)
+			return runServe(addr, dbPath, engineBin, grpcAddr, otelEndpoint, slackWebhook, apiKey)
 		},
 	}
 	f := cmd.Flags()
@@ -225,13 +226,18 @@ func newServeCmd() *cobra.Command {
 	f.StringVar(&dbPath, "db", "data/violations", "BadgerDB のパス")
 	f.StringVar(&engineBin, "engine-bin", engine.DefaultBin, "dataguard-engine バイナリのパス（--grpc-addr 未指定時）")
 	f.StringVar(&grpcAddr, "grpc-addr", "", "dataguard-engine gRPC アドレス（例: localhost:50051）")
+	f.StringVar(&apiKey, "api-key", "", "API 認証キー（未指定=認証無効。本番運用では必須）")
 	return cmd
 }
 
-func runServe(addr, dbPath, engineBin, grpcAddr, otelEndpoint, slackWebhook string) error {
+func runServe(addr, dbPath, engineBin, grpcAddr, otelEndpoint, slackWebhook, apiKey string) error {
 	ctx := context.Background()
 	log, _ := zap.NewProduction()
 	defer func() { _ = log.Sync() }()
+
+	if apiKey == "" {
+		log.Warn("--api-key が未指定です。/api と / は認証なしで公開されます（本番運用では必ず指定してください）")
+	}
 
 	shutdown, err := telemetry.Init(ctx, otelEndpoint)
 	if err != nil {
@@ -259,7 +265,7 @@ func runServe(addr, dbPath, engineBin, grpcAddr, otelEndpoint, slackWebhook stri
 	}
 
 	notifier := alert.NewSlack(slackWebhook)
-	srv := server.New(st, runner, notifier)
+	srv := server.New(st, runner, notifier, apiKey)
 
 	log.Info("starting server", zap.String("addr", addr))
 	return srv.Run(addr)
