@@ -161,7 +161,53 @@ fn col_index(headers: &[String], name: &str, rule: &str) -> Result<usize> {
         .ok_or_else(|| anyhow!("rule `{}`: 列 `{}` が CSV に存在しない", rule, name))
 }
 
+/// ルールが参照する列/キー名 (violation の column フィールドに使う)。
+fn check_label(check: &Check) -> &str {
+    match check {
+        Check::NotNull { column }
+        | Check::Compare { column, .. }
+        | Check::Matches { column, .. } => column,
+        Check::Unique { key, .. } => key,
+    }
+}
+
+/// 行単独で判定できるルール (NotNull/Compare/Matches) がこのセルで違反かどうか。
+/// Unique は行をまたいだ集計 (出現数) が必要なため呼び出し元で個別に扱う。
+fn is_row_violation(check: &Check, cell: &str) -> bool {
+    match check {
+        Check::NotNull { .. } => cell.trim().is_empty(),
+        Check::Compare { op, rhs, .. } => !matches!(
+            cell.trim().parse::<f64>().map(|v| op.eval(v, *rhs)),
+            Ok(true)
+        ),
+        Check::Matches { re, .. } => !re.is_match(cell),
+        Check::Unique { .. } => unreachable!("Unique は呼び出し元で処理する"),
+    }
+}
+
+/// コンパイル済みルール一体 (列インデックス解決済み)。
+struct Compiled<'a> {
+    raw: &'a RawRule,
+    check: Check,
+    idx: usize,
+}
+
+fn compile_rules<'a>(headers: &[String], raw_rules: &'a [RawRule]) -> Result<Vec<Compiled<'a>>> {
+    raw_rules
+        .iter()
+        .map(|raw| {
+            let check = Check::compile(raw)?;
+            let idx = col_index(headers, check_label(&check), &raw.name)?;
+            Ok(Compiled { raw, check, idx })
+        })
+        .collect()
+}
+
 /// CSV ファイルとルールファイルを読み込み違反一覧を返す。
+///
+/// 大容量 CSV でも全行をメモリに展開しないよう、1 パスのストリーミングで評価する。
+/// `count` (Unique) ルールのみキーごとの最終出現数が必要なため、対象列だけを
+/// 抜き出す事前集計パスを行う (メモリ使用量はキーの distinct 数に比例し、行数には比例しない)。
 pub fn check_file(input: &str, rules: &str, detected_at: &str) -> Result<Vec<Violation>> {
     let table = Path::new(input)
         .file_stem()
@@ -177,16 +223,69 @@ pub fn check_file(input: &str, rules: &str, detected_at: &str) -> Result<Vec<Vio
     let mut reader =
         csv::Reader::from_path(input).with_context(|| format!("failed to open CSV: {input}"))?;
     let headers: Vec<String> = reader.headers()?.iter().map(|s| s.to_string()).collect();
-    let records: Vec<Vec<String>> = reader
-        .records()
-        .map(|r| r.map(|rec| rec.iter().map(|s| s.to_string()).collect()))
-        .collect::<std::result::Result<_, _>>()
-        .context("failed to read CSV records")?;
+    let compiled = compile_rules(&headers, &ruleset.rules)?;
 
-    evaluate(&headers, &records, &ruleset.rules, &table, detected_at)
+    let unique_positions: Vec<usize> = compiled
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| matches!(c.check, Check::Unique { .. }))
+        .map(|(i, _)| i)
+        .collect();
+
+    let mut counts: HashMap<usize, HashMap<String, u64>> = HashMap::new();
+    if !unique_positions.is_empty() {
+        let mut counter = csv::Reader::from_path(input)
+            .with_context(|| format!("failed to open CSV (count pass): {input}"))?;
+        for result in counter.records() {
+            let rec = result.context("failed to read CSV records (count pass)")?;
+            for &pos in &unique_positions {
+                let cell = rec.get(compiled[pos].idx).unwrap_or("").to_string();
+                *counts.entry(pos).or_default().entry(cell).or_insert(0) += 1;
+            }
+        }
+    }
+
+    let mut violations: Vec<Violation> = Vec::new();
+    let run_ms = Utc::now().timestamp_millis();
+    let mut seq = 0usize;
+
+    for (row_i, result) in reader.records().enumerate() {
+        let rec = result.context("failed to read CSV records")?;
+        let row = row_i + 1;
+        for (pos, c) in compiled.iter().enumerate() {
+            let cell = rec.get(c.idx).unwrap_or("");
+            let violated = match &c.check {
+                Check::Unique { op, rhs, .. } => {
+                    let count = counts
+                        .get(&pos)
+                        .and_then(|m| m.get(cell))
+                        .copied()
+                        .unwrap_or(0);
+                    !op.eval(count as f64, *rhs)
+                }
+                other => is_row_violation(other, cell),
+            };
+            if violated {
+                seq += 1;
+                violations.push(Violation {
+                    id: format!("viol-{run_ms}-{seq}"),
+                    rule: c.raw.name.clone(),
+                    table: table.clone(),
+                    row,
+                    column: check_label(&c.check).to_string(),
+                    value: cell.to_string(),
+                    detected_at: detected_at.to_string(),
+                });
+            }
+        }
+    }
+
+    Ok(violations)
 }
 
-/// パース済みデータに対してルールを評価する (テスト可能なコア)。
+/// パース済みデータに対してルールを評価する (インメモリ版・テスト専用ヘルパー)。
+/// 本番経路は `check_file` のストリーミング実装を使用する。
+#[cfg(test)]
 fn evaluate(
     headers: &[String],
     records: &[Vec<String>],
@@ -281,6 +380,45 @@ mod tests {
         data.iter()
             .map(|r| r.iter().map(|s| s.to_string()).collect())
             .collect()
+    }
+
+    /// テスト用に一意なパスへ内容を書き込む (tempfile crate に依存しない簡易実装)。
+    fn write_temp(name: &str, content: &str) -> String {
+        let path = std::env::temp_dir().join(format!(
+            "dataguard-check-test-{}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+            name
+        ));
+        std::fs::write(&path, content).unwrap();
+        path.to_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn check_file_streams_without_materializing_all_rows() {
+        // count ルールを含む混在ルールセットで、check_file (ストリーミング) が
+        // evaluate (インメモリ) と同じ違反を返すことを確認する。
+        let csv = "sale_price,stock_id\n100,A\n-5,A\n0,B\n";
+        let rules = "rules:\n  - name: positive_price\n    column: sale_price\n    expression: \"value > 0\"\n  - name: no_dup_stock\n    key: stock_id\n    expression: \"count <= 1\"\n";
+        let csv_path = write_temp("input.csv", csv);
+        let rules_path = write_temp("rules.yaml", rules);
+
+        let got = check_file(&csv_path, &rules_path, "T").unwrap();
+        std::fs::remove_file(&csv_path).ok();
+        std::fs::remove_file(&rules_path).ok();
+
+        // positive_price: row2(-5), row3(0) が違反 / no_dup_stock: A が2回出現するので row1,row2 が違反
+        assert_eq!(got.len(), 4);
+        assert!(got.iter().any(|v| v.rule == "positive_price" && v.row == 2));
+        assert!(got.iter().any(|v| v.rule == "positive_price" && v.row == 3));
+        assert!(got
+            .iter()
+            .filter(|v| v.rule == "no_dup_stock")
+            .all(|v| v.value == "A"));
+        assert_eq!(got.iter().filter(|v| v.rule == "no_dup_stock").count(), 2);
     }
 
     #[test]
