@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
+	"os"
 
 	"github.com/flipslidersand/dataguard-rail/internal/pb"
 	"google.golang.org/grpc"
@@ -19,11 +21,37 @@ type GrpcRunner struct {
 
 // NewGrpc は addr の gRPC サーバーに接続する。
 func NewGrpc(addr string) (*GrpcRunner, error) {
+	warnIfNotLoopback(addr)
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, fmt.Errorf("grpc dial %q: %w", addr, err)
 	}
 	return &GrpcRunner{conn: conn, client: pb.NewDataGuardClient(conn)}, nil
+}
+
+// warnIfNotLoopback はループバック外へ接続しようとした際に stderr へ警告を出す。
+// この gRPC チャネルは TLS 未対応の平文通信であり、信頼できないネットワーク上での
+// 中間者攻撃（csv_path/sql_path 改ざん、violations_json 偽装）を許してしまうため。
+func warnIfNotLoopback(addr string) {
+	if isLoopbackAddr(addr) {
+		return
+	}
+	fmt.Fprintf(os.Stderr,
+		"WARNING: --grpc-addr %q はループバック外です。この gRPC チャネルは TLS 未対応の平文通信です。"+
+			"信頼できないネットワークを経由させず、SSH トンネル等で保護してください。\n", addr)
+}
+
+// isLoopbackAddr は host:port もしくは host 単体の addr がループバックを指すか判定する。
+func isLoopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // Close は gRPC 接続を閉じる。
