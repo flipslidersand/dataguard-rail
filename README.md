@@ -94,6 +94,13 @@ dataguard ingest --grpc-addr localhost:50051 \
   --rules examples/rules.yaml
 ```
 
+> **Security / セキュリティ注意:** この gRPC チャネルは TLS 未対応の平文通信です。
+> デフォルトはループバック (`[::1]`) バインドですが、`--addr`/`--grpc-addr` を
+> ループバック外に向けると同一ネットワーク上の攻撃者による中間者攻撃
+> （`csv_path`/`sql_path` の書き換え、`violations_json` の改ざん）が成立します。
+> Go と Rust を別ホストで動かす場合は SSH トンネル等で経路を保護してください
+> （ループバック外バインド時は起動時に警告ログが出力されます）。
+
 ### Daemon mode / スケジューラモード (`--daemon`)
 
 Add `schedule` to `sources.yaml` for cron-based execution.  

@@ -123,9 +123,16 @@ async fn run_serve(addr: String) -> Result<()> {
     use grpc::DataGuardService;
     use tonic::transport::Server;
 
-    let addr_parsed = addr
+    let addr_parsed: std::net::SocketAddr = addr
         .parse()
         .with_context(|| format!("invalid addr: {addr}"))?;
+    if !addr_parsed.ip().is_loopback() {
+        eprintln!(
+            "WARNING: --addr {addr} はループバック外にバインドされています。\
+             この gRPC チャネルは TLS 未対応の平文通信です。\
+             信頼できないネットワークに公開しないでください（SSH トンネル等の利用を推奨）。"
+        );
+    }
     eprintln!("gRPC server listening on {addr}");
 
     Server::builder()
