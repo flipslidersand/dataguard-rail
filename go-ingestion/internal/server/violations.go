@@ -46,7 +46,10 @@ func (s *Server) handleViolations(c *gin.Context) {
 	// table フィルタ付き: 全件取得後にフィルタ・ページネーション。
 	all, err := s.store.ListViolations()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		// ListViolations は保存件数が store.MaxListViolations を超えるとエラーを返す
+		// （メモリ圧迫防止）。table フィルタは大規模データセットでは未対応であることを
+		// クライアントに明示する。
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": err.Error()})
 		return
 	}
 

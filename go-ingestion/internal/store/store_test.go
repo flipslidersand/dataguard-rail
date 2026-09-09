@@ -73,6 +73,42 @@ func TestSaveViolationsLargeBatch(t *testing.T) {
 	}
 }
 
+// TestListViolationsRefusesOverCap は MaxListViolations を超える件数で
+// ListViolations がエラーを返し、無制限にメモリ展開しないことを確認する。
+func TestListViolationsRefusesOverCap(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	orig := MaxListViolations
+	MaxListViolations = 5
+	defer func() { MaxListViolations = orig }()
+
+	n := MaxListViolations + 1
+	vs := make([]engine.Violation, n)
+	for i := 0; i < n; i++ {
+		vs[i] = engine.Violation{ID: fmt.Sprintf("v%d", i), Rule: "rule", Table: "t", Row: i}
+	}
+	if err := s.SaveViolations(vs); err != nil {
+		t.Fatalf("SaveViolations: %v", err)
+	}
+
+	if _, err := s.ListViolations(); err == nil {
+		t.Fatal("expected error when violation count exceeds MaxListViolations")
+	}
+
+	// ページネーション版は上限に縛られず引き続き利用できる。
+	got, err := s.ListViolationsPaged(n, 0)
+	if err != nil {
+		t.Fatalf("ListViolationsPaged: %v", err)
+	}
+	if len(got) != n {
+		t.Fatalf("want %d violations via paged API, got %d", n, len(got))
+	}
+}
+
 func TestListEmpty(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {

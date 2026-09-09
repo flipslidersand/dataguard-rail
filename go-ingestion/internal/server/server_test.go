@@ -14,13 +14,19 @@ import (
 
 // fakeStore はテスト用の Storer 実装。
 type fakeStore struct {
-	violations []engine.Violation
-	diff       *store.SchemaDiff
-	diffs      []store.SchemaDiff
+	violations        []engine.Violation
+	diff              *store.SchemaDiff
+	diffs             []store.SchemaDiff
+	listViolationsErr error
 }
 
-func (f *fakeStore) ListViolations() ([]engine.Violation, error) { return f.violations, nil }
-func (f *fakeStore) CountViolations() (int, error)               { return len(f.violations), nil }
+func (f *fakeStore) ListViolations() ([]engine.Violation, error) {
+	if f.listViolationsErr != nil {
+		return nil, f.listViolationsErr
+	}
+	return f.violations, nil
+}
+func (f *fakeStore) CountViolations() (int, error) { return len(f.violations), nil }
 func (f *fakeStore) ListViolationsPaged(limit, offset int) ([]engine.Violation, error) {
 	all := f.violations
 	if offset >= len(all) {
@@ -98,6 +104,20 @@ func TestViolationsFilter(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &got)
 	if len(got) != 1 || got[0].Table != "products" {
 		t.Errorf("unexpected filter result: %+v", got)
+	}
+}
+
+// TestViolationsFilterOverCapReturns413 は store.ListViolations が上限超過エラーを
+// 返した場合、table フィルタ付きリクエストが 413 を返すことを確認する
+// （store.MaxListViolations 超過時のメモリ圧迫防止。#86）。
+func TestViolationsFilterOverCapReturns413(t *testing.T) {
+	st := &fakeStore{listViolationsErr: fmt.Errorf("violation件数が上限を超えました")}
+	srv := newTestServer(st, &fakeRunner{})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/violations?table=products", nil)
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("want 413, got %d", w.Code)
 	}
 }
 

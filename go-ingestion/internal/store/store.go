@@ -12,6 +12,12 @@ import (
 // keyPrefix は violation レコードの key プレフィックス (`violation:<table>:<id>`)。
 const keyPrefix = "violation:"
 
+// MaxListViolations は ListViolations が一度にメモリへ展開できる最大件数。
+// 超過する場合はメモリ圧迫を避けるためエラーを返す（呼び出し側は
+// ListViolationsPaged によるページネーションを使うこと）。
+// var なのはテストで小さい値に差し替えるため。
+var MaxListViolations = 100_000
+
 // Store は BadgerDB のラッパ。
 type Store struct {
 	db *badger.DB
@@ -136,6 +142,8 @@ func (s *Store) ListViolationsPaged(limit, offset int) ([]engine.Violation, erro
 }
 
 // ListViolations は保存済みの全 violation を prefix scan で返す。
+// 件数が MaxListViolations を超える場合、メモリ圧迫を避けるためエラーを返す。
+// 大規模データセットでは ListViolationsPaged を使うこと。
 func (s *Store) ListViolations() ([]engine.Violation, error) {
 	var out []engine.Violation
 	err := s.db.View(func(txn *badger.Txn) error {
@@ -143,6 +151,11 @@ func (s *Store) ListViolations() ([]engine.Violation, error) {
 		defer it.Close()
 		prefix := []byte(keyPrefix)
 		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			if len(out) >= MaxListViolations {
+				return fmt.Errorf(
+					"violation件数が上限 %d を超えました。ListViolationsPaged でページネーションしてください",
+					MaxListViolations)
+			}
 			err := it.Item().Value(func(val []byte) error {
 				var v engine.Violation
 				if err := json.Unmarshal(val, &v); err != nil {
