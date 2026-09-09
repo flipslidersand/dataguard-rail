@@ -63,8 +63,21 @@ async fn main() -> Result<()> {
     }
 }
 
+/// --sql に .sql 拡張子付きの文字列が渡されたのにファイルが存在しない場合に true を返す。
+/// 単なる SQL パースエラーに埋もれてパスのタイポに気づきにくくなるのを防ぐための判定。
+fn should_warn_ambiguous_sql_path(sql: &str, exists: bool) -> bool {
+    !exists && sql.to_lowercase().ends_with(".sql")
+}
+
 fn run_analyze(sql: String, out: String) -> Result<()> {
-    let sql_text = if std::path::Path::new(&sql).exists() {
+    let exists = std::path::Path::new(&sql).exists();
+    if should_warn_ambiguous_sql_path(&sql, exists) {
+        eprintln!(
+            "WARNING: --sql {sql:?} はファイルとして見つかりません。\
+             パスの誤りでなければ、この文字列自体を生の SQL として解析します。"
+        );
+    }
+    let sql_text = if exists {
         fs::read_to_string(&sql).with_context(|| format!("Failed to read SQL file: {sql}"))?
     } else {
         sql
@@ -141,4 +154,32 @@ async fn run_serve(addr: String) -> Result<()> {
         .await
         .context("gRPC server error")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod analyze_sql_path_tests {
+    use super::should_warn_ambiguous_sql_path;
+
+    #[test]
+    fn warns_when_sql_extension_but_missing_file() {
+        assert!(should_warn_ambiguous_sql_path("queries/report.sql", false));
+    }
+
+    #[test]
+    fn warns_case_insensitively() {
+        assert!(should_warn_ambiguous_sql_path("REPORT.SQL", false));
+    }
+
+    #[test]
+    fn no_warning_when_file_exists() {
+        assert!(!should_warn_ambiguous_sql_path("queries/report.sql", true));
+    }
+
+    #[test]
+    fn no_warning_for_raw_sql_without_sql_extension() {
+        assert!(!should_warn_ambiguous_sql_path(
+            "SELECT * FROM customers",
+            false
+        ));
+    }
 }
