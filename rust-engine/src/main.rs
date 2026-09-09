@@ -5,6 +5,9 @@ mod lineage;
 #[path = "lineage_test.rs"]
 mod lineage_test;
 mod profile;
+#[cfg(test)]
+#[path = "serve_tls_test.rs"]
+mod serve_tls_test;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -49,6 +52,18 @@ enum Command {
     Serve {
         #[arg(long, default_value = "[::1]:50051")]
         addr: String,
+        /// TLS サーバー証明書 (PEM)。--tls-key と併用。
+        #[arg(long)]
+        tls_cert: Option<String>,
+        /// TLS サーバー秘密鍵 (PEM)。--tls-cert と併用。
+        #[arg(long)]
+        tls_key: Option<String>,
+        /// クライアント証明書を検証する CA 証明書 (PEM)。指定時は mTLS を要求する。
+        #[arg(long)]
+        tls_client_ca: Option<String>,
+        /// ループバック外でも TLS なし平文通信を明示的に許可する（非推奨）。
+        #[arg(long)]
+        insecure: bool,
     },
 }
 
@@ -59,7 +74,13 @@ async fn main() -> Result<()> {
         Command::Analyze { sql, out } => run_analyze(sql, out),
         Command::Check { input, rules, out } => run_check(input, rules, out),
         Command::Profile { input, out } => run_profile(input, out),
-        Command::Serve { addr } => run_serve(addr).await,
+        Command::Serve {
+            addr,
+            tls_cert,
+            tls_key,
+            tls_client_ca,
+            insecure,
+        } => run_serve(addr, tls_cert, tls_key, tls_client_ca, insecure).await,
     }
 }
 
@@ -118,24 +139,65 @@ fn run_check(input: String, rules: String, out: String) -> Result<()> {
     Ok(())
 }
 
-async fn run_serve(addr: String) -> Result<()> {
+async fn run_serve(
+    addr: String,
+    tls_cert: Option<String>,
+    tls_key: Option<String>,
+    tls_client_ca: Option<String>,
+    insecure: bool,
+) -> Result<()> {
     use grpc::dataguard::data_guard_server::DataGuardServer;
     use grpc::DataGuardService;
-    use tonic::transport::Server;
+    use tonic::transport::{Certificate, Identity, Server, ServerTlsConfig};
 
     let addr_parsed: std::net::SocketAddr = addr
         .parse()
         .with_context(|| format!("invalid addr: {addr}"))?;
-    if !addr_parsed.ip().is_loopback() {
-        eprintln!(
-            "WARNING: --addr {addr} はループバック外にバインドされています。\
-             この gRPC チャネルは TLS 未対応の平文通信です。\
-             信頼できないネットワークに公開しないでください（SSH トンネル等の利用を推奨）。"
-        );
-    }
+
+    let tls_config = match (&tls_cert, &tls_key) {
+        (Some(cert_path), Some(key_path)) => {
+            let cert = fs::read_to_string(cert_path)
+                .with_context(|| format!("failed to read --tls-cert: {cert_path}"))?;
+            let key = fs::read_to_string(key_path)
+                .with_context(|| format!("failed to read --tls-key: {key_path}"))?;
+            let identity = Identity::from_pem(cert, key);
+            let mut cfg = ServerTlsConfig::new().identity(identity);
+            if let Some(ca_path) = &tls_client_ca {
+                let ca_pem = fs::read_to_string(ca_path)
+                    .with_context(|| format!("failed to read --tls-client-ca: {ca_path}"))?;
+                cfg = cfg.client_ca_root(Certificate::from_pem(ca_pem));
+            }
+            Some(cfg)
+        }
+        (None, None) => {
+            if !addr_parsed.ip().is_loopback() && !insecure {
+                anyhow::bail!(
+                    "refusing to bind {addr} without TLS: this addr is not loopback. \
+                     Provide --tls-cert/--tls-key (optionally --tls-client-ca for mTLS), \
+                     or pass --insecure to opt in to plaintext explicitly."
+                );
+            }
+            if !addr_parsed.ip().is_loopback() {
+                eprintln!(
+                    "WARNING: --addr {addr} はループバック外にバインドされています。\
+                     --insecure が指定されたため TLS 未対応の平文通信のまま起動します。\
+                     信頼できないネットワークに公開しないでください（SSH トンネル等の利用を推奨）。"
+                );
+            }
+            None
+        }
+        _ => anyhow::bail!("--tls-cert and --tls-key must be set together"),
+    };
+
     eprintln!("gRPC server listening on {addr}");
 
-    Server::builder()
+    let mut builder = Server::builder();
+    if let Some(cfg) = tls_config {
+        builder = builder
+            .tls_config(cfg)
+            .context("invalid TLS configuration")?;
+    }
+    builder
         .add_service(DataGuardServer::new(DataGuardService))
         .serve(addr_parsed)
         .await
