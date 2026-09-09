@@ -41,11 +41,24 @@ pub struct ColumnRef {
     pub alias: Option<String>,
 }
 
+/// 文字境界を考慮して s の先頭最大 max_bytes バイトを返す。
+/// UTF-8 のマルチバイト文字の途中で切ると panic するバイトスライスの代わりに使う。
+fn safe_prefix(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 /// SQL テキストを解析してリネージュレポートを生成する。
 pub fn analyze(sql: &str) -> Result<LineageReport> {
     let dialect = GenericDialect {};
     let stmts = Parser::parse_sql(&dialect, sql)
-        .with_context(|| format!("SQL parse failed: {}", &sql[..sql.len().min(120)]))?;
+        .with_context(|| format!("SQL parse failed: {}", safe_prefix(sql, 120)))?;
 
     let mut graph: DiGraph<String, ()> = DiGraph::new();
     let mut node_index: HashMap<String, petgraph::graph::NodeIndex> = HashMap::new();
@@ -241,5 +254,30 @@ fn expr_to_col_ref(expr: &Expr, alias: Option<String>) -> Option<ColumnRef> {
             alias,
         }),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod safe_prefix_tests {
+    use super::safe_prefix;
+
+    #[test]
+    fn shorter_than_max_returns_whole_string() {
+        assert_eq!(safe_prefix("hello", 120), "hello");
+    }
+
+    #[test]
+    fn ascii_exact_boundary_truncates_cleanly() {
+        let s = "x".repeat(10);
+        assert_eq!(safe_prefix(&s, 5), "xxxxx");
+    }
+
+    #[test]
+    fn multibyte_char_at_boundary_backs_off_instead_of_panicking() {
+        // "あ" は UTF-8 で 3 バイト。境界 4 は文字の途中（バイト位置 3〜5）に来る。
+        let s = "aaaあbbb";
+        let prefix = safe_prefix(s, 4);
+        assert!(s.is_char_boundary(prefix.len()));
+        assert_eq!(prefix, "aaa"); // 4 バイト目は "あ" の途中なので 3 バイトまで後退する
     }
 }
