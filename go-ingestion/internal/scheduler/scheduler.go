@@ -33,11 +33,26 @@ func New(ctx context.Context, log *zap.Logger) *Scheduler {
 	}
 	jobCtx, cancel := context.WithCancel(ctx)
 	return &Scheduler{
-		c:      cron.New(),
+		// SkipIfStillRunning: 前回起動のジョブ（Postgres 読み込み → engine 呼び出し →
+		// BadgerDB 書き込み）がスケジュール間隔より長くかかった場合、次のトリガーを
+		// 並行実行せずスキップする（BadgerDB 並行書き込み競合・二重クエリ・
+		// violation/アラート二重送信を防止）。
+		c:      cron.New(cron.WithChain(cron.SkipIfStillRunning(zapCronLogger{log}))),
 		ctx:    jobCtx,
 		cancel: cancel,
 		log:    log,
 	}
+}
+
+// zapCronLogger は *zap.Logger を robfig/cron の cron.Logger インターフェースに適合させる。
+type zapCronLogger struct{ log *zap.Logger }
+
+func (l zapCronLogger) Info(msg string, keysAndValues ...interface{}) {
+	l.log.Sugar().Infow(msg, keysAndValues...)
+}
+
+func (l zapCronLogger) Error(err error, msg string, keysAndValues ...interface{}) {
+	l.log.Sugar().Errorw(msg, append(keysAndValues, "error", err)...)
 }
 
 // Register は DataSource を cron に登録する。
