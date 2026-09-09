@@ -10,6 +10,8 @@ import (
 
 	"github.com/flipslidersand/dataguard-rail/internal/engine"
 	"github.com/flipslidersand/dataguard-rail/internal/store"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 // fakeStore はテスト用の Storer 実装。
@@ -43,11 +45,11 @@ func (f *fakeRunner) Analyze(_ context.Context, _ string) (json.RawMessage, erro
 }
 
 func newTestServer(st Storer, runner Runner) *Server {
-	return New(st, runner, nil, "")
+	return New(st, runner, nil, "", nil)
 }
 
 func newAuthedTestServer(st Storer, runner Runner, apiKey string) *Server {
-	return New(st, runner, nil, apiKey)
+	return New(st, runner, nil, apiKey, nil)
 }
 
 func TestHealth(t *testing.T) {
@@ -200,6 +202,37 @@ func TestSchemaDiffTable(t *testing.T) {
 	}
 	if len(got.Added) != 1 {
 		t.Errorf("want 1 added column, got %d", len(got.Added))
+	}
+}
+
+// failingNotifier は常にエラーを返す alert.Notifier。
+type failingNotifier struct{ err error }
+
+func (f failingNotifier) Notify(_ context.Context, _ string) error { return f.err }
+
+// TestSchemaDiffLogsNotifyFailure は notifier.Notify が失敗した際、
+// handleSchemaDiff がそのエラーを握りつぶさずログに記録することを確認する（#108）。
+func TestSchemaDiffLogsNotifyFailure(t *testing.T) {
+	diff := &store.SchemaDiff{
+		Table: "products", DetectedAt: "2026-01-02T00:00:00Z",
+		Added: []store.ColumnDef{{Name: "discount", Type: "numeric"}},
+	}
+	notifyErr := fmt.Errorf("slack webhook: 429 too many requests")
+
+	core, logs := observer.New(zap.WarnLevel)
+	log := zap.New(core)
+
+	s := New(&fakeStore{diff: diff}, &fakeRunner{}, failingNotifier{err: notifyErr}, "", log)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/schema-diff?table=products", nil)
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", w.Code)
+	}
+
+	entries := logs.FilterMessage("notify failed").All()
+	if len(entries) != 1 {
+		t.Fatalf("want 1 'notify failed' log entry, got %d: %+v", len(entries), logs.All())
 	}
 }
 
