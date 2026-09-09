@@ -5,6 +5,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/flipslidersand/dataguard-rail/internal/alert"
 	"github.com/flipslidersand/dataguard-rail/internal/config"
@@ -12,6 +13,10 @@ import (
 	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
 )
+
+// StopTimeout は Stop() が実行中ジョブの完了をどれだけ待つかの上限。
+// 超過した場合はジョブの完了を待たずに戻る（プロセス終了自体をブロックしないため）。
+var StopTimeout = 30 * time.Second
 
 // Runner はスケジューラが使う pipeline.Run と同じシグネチャ。テストで差し替え可能。
 type Runner func(ctx context.Context, src config.DataSource) error
@@ -65,10 +70,18 @@ func (s *Scheduler) Register(src config.DataSource, run Runner) error {
 // Start は cron ループを開始する。
 func (s *Scheduler) Start() { s.c.Start() }
 
-// Stop は実行中ジョブの ctx をキャンセルし、cron ループを停止して完了を待つ。
+// Stop は実行中ジョブの ctx をキャンセルし、cron ループを停止して
+// 実行中ジョブの完了を（最大 StopTimeout まで）待つ。
+// cron.Cron.Stop() 自体は新規起動を止めるだけで実行中ジョブは待たないため、
+// その戻り値の context の Done を明示的に待つ必要がある。
 func (s *Scheduler) Stop() {
 	s.cancel()
-	s.c.Stop()
+	done := s.c.Stop().Done()
+	select {
+	case <-done:
+	case <-time.After(StopTimeout):
+		s.log.Warn("scheduler stop: running job(s) did not finish within timeout", zap.Duration("timeout", StopTimeout))
+	}
 }
 
 // HasJobs はスケジュール登録済みジョブがあるかを返す。
