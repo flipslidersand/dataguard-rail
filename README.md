@@ -198,12 +198,24 @@ dataguard-engine profile --input data/products.csv --out profile.json
 ## Tests / テスト
 
 ```bash
-# Rust (21 tests / 21 テスト)
+# Rust (22 tests / 22 テスト)
 cd rust-engine && cargo test
 
-# Go (all packages / 全パッケージ)
+# Go (30 tests / 30 テスト, all packages / 全パッケージ)
 cd go-ingestion && go test ./...
 ```
+
+## Benchmark / ベンチマーク
+
+Measured with a release build (`cargo build --release`) on a synthetic 1M-row CSV
+(2 comparison rules: `sale_price > 0`, `qty > 0`).
+リリースビルドで合成した100万行CSV（比較ルール2件: `sale_price > 0`, `qty > 0`）を検証した実測値。
+
+| Metric / 指標 | Result / 結果 |
+|---|---|
+| Rows processed / 処理行数 | 1,000,000 |
+| Wall time / 実行時間 | 1.21s |
+| Violations detected / 検出違反数 | 666,966 |
 
 ## API Endpoints / API エンドポイント
 
