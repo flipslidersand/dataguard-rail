@@ -244,13 +244,31 @@ func newServeCmd() *cobra.Command {
 	return cmd
 }
 
+// checkAPIKeyRequirement は apiKey 未指定時の無認証起動を明示的なオプトインなしには許可しない。
+// allowInsecureEnv には DATAGUARD_ALLOW_INSECURE 環境変数の値を渡す ("1" のみ許可)。
+func checkAPIKeyRequirement(apiKey, allowInsecureEnv string) error {
+	if apiKey != "" {
+		return nil
+	}
+	if allowInsecureEnv != "1" {
+		return fmt.Errorf(
+			"--api-key が未指定です。無認証で violations/lineage/schema-diff が公開されます。" +
+				"意図的な場合は環境変数 DATAGUARD_ALLOW_INSECURE=1 を設定して起動してください",
+		)
+	}
+	return nil
+}
+
 func runServe(addr, dbPath, engineBin, grpcAddr, otelEndpoint, slackWebhook, apiKey string, grpcTLS engine.GrpcTLSConfig) error {
 	ctx := context.Background()
 	log, _ := zap.NewProduction()
 	defer func() { _ = log.Sync() }()
 
+	if err := checkAPIKeyRequirement(apiKey, os.Getenv("DATAGUARD_ALLOW_INSECURE")); err != nil {
+		return err
+	}
 	if apiKey == "" {
-		log.Warn("--api-key が未指定です。/api と / は認証なしで公開されます（本番運用では必ず指定してください）")
+		log.Warn("DATAGUARD_ALLOW_INSECURE=1 のため --api-key 未指定のまま起動します。/api と / は認証なしで公開されます")
 	}
 
 	shutdown, err := telemetry.Init(ctx, otelEndpoint)

@@ -171,7 +171,13 @@ dataguard serve --addr :8080 --db data/violations --api-key "$(gopass show -o in
 curl -H "Authorization: Bearer $API_KEY" http://localhost:8080/api/violations
 ```
 
-`--api-key` を指定しない場合、`/` と `/api/*` は認証なしで公開される（ローカル開発専用。本番運用では必須）。
+`--api-key` は必須。未指定のまま起動すると `serve` はエラーで終了する。
+意図的にローカル開発用途で無認証起動したい場合のみ `DATAGUARD_ALLOW_INSECURE=1` を設定する:
+
+```bash
+DATAGUARD_ALLOW_INSECURE=1 dataguard serve --addr :8080 --db data/violations
+```
+
 `/health` は監視用に常に認証不要。
 
 ### SQL Lineage Analysis / SQL リネージュ解析
