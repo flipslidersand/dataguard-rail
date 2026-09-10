@@ -76,7 +76,9 @@ func Run(ctx context.Context, cfg *config.Config, rulesPath, tmpDir string, load
 		log.Info("ingested", zap.String("source", src.Name), zap.String("type", string(src.Type)), zap.Int("violations", n))
 		telemetry.RecordIngest(ctx, src.Name, string(src.Type), int64(n))
 		if n > 0 {
-			_ = notifier.Notify(ctx, fmt.Sprintf("[dataguard] %s: %d violation(s) detected", src.Name, n))
+			if err := notifier.Notify(ctx, fmt.Sprintf("[dataguard] %s: %d violation(s) detected", src.Name, n)); err != nil {
+				log.Warn("notify failed", zap.String("source", src.Name), zap.Error(err))
+			}
 		}
 		results = append(results, Result{Source: src.Name, Violations: n})
 	}
