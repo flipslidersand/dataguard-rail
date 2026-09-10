@@ -99,3 +99,64 @@ func TestOverlappingJobIsSkipped(t *testing.T) {
 		t.Errorf("expected max concurrent executions <= 1, got %d", maxConcurrent.Load())
 	}
 }
+
+// TestStopWaitsForRunningJob は Stop() が実行中ジョブの完了を待ってから
+// 戻ることを確認する（#91）。
+func TestStopWaitsForRunningJob(t *testing.T) {
+	var started, finished atomic.Bool
+
+	s := New(context.Background(), nil)
+	src := config.DataSource{Name: "x", Schedule: "@every 50ms"}
+	if err := s.Register(src, func(_ context.Context, _ config.DataSource) error {
+		started.Store(true)
+		time.Sleep(300 * time.Millisecond)
+		finished.Store(true)
+		return nil
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	s.Start()
+
+	// ジョブが実際に開始するまで待つ（固定 sleep だとティックの前に Stop してしまい
+	// 「ジョブが一度も走らないまま Stop が即座に返る」フレークになる）。
+	deadline := time.Now().Add(2 * time.Second)
+	for !started.Load() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !started.Load() {
+		t.Fatal("job never started within 2s")
+	}
+
+	s.Stop()
+	if !finished.Load() {
+		t.Error("Stop() returned before the running job finished")
+	}
+}
+
+// TestStopTimesOutIfJobHangs は StopTimeout を超えるジョブに対し、Stop() が
+// 完了を待たずタイムアウトで戻ることを確認する（プロセス終了自体をブロックしないため）。
+func TestStopTimesOutIfJobHangs(t *testing.T) {
+	orig := StopTimeout
+	StopTimeout = 50 * time.Millisecond
+	defer func() { StopTimeout = orig }()
+
+	blockCtx, unblock := context.WithCancel(context.Background())
+	defer unblock()
+
+	s := New(context.Background(), nil)
+	src := config.DataSource{Name: "x", Schedule: "@every 20ms"}
+	if err := s.Register(src, func(_ context.Context, _ config.DataSource) error {
+		<-blockCtx.Done() // Stop がタイムアウトするまで戻らない
+		return nil
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	s.Start()
+	time.Sleep(50 * time.Millisecond)
+
+	start := time.Now()
+	s.Stop()
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Errorf("Stop() should return promptly after StopTimeout, took %v", elapsed)
+	}
+}
