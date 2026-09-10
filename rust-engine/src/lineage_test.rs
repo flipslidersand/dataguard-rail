@@ -2,6 +2,22 @@
 mod tests {
     use crate::lineage::analyze;
 
+    /// 無効な SQL のエラーメッセージ生成で、マルチバイト文字がちょうど
+    /// トリム境界（120 バイト目付近）に来ても panic せず Err を返すことを確認する（#92）。
+    #[test]
+    fn invalid_sql_with_multibyte_char_at_trim_boundary_does_not_panic() {
+        // ASCII 119 バイト + マルチバイト文字（3 バイト）を、ちょうどバイト境界 120 を
+        // 跨ぐ位置に配置する。SQL として無効な文字列なのでパースは必ず失敗する。
+        let padding = "x".repeat(119);
+        let sql = format!("{padding}あ !!!invalid!!!");
+
+        // byte 120 がマルチバイト文字の途中に来ていることを前提として確認する。
+        assert!(!sql.is_char_boundary(120), "test setup invariant broken");
+
+        let result = analyze(&sql);
+        assert!(result.is_err(), "expected a parse error, not a panic");
+    }
+
     #[test]
     fn simple_select_extracts_source_table() {
         let report = analyze("SELECT id, name FROM customers").unwrap();
