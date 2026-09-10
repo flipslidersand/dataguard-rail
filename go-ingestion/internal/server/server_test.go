@@ -158,6 +158,16 @@ func TestLineageMissingParam(t *testing.T) {
 	}
 }
 
+func TestLineageAbsolutePathRejected(t *testing.T) {
+	srv := newTestServer(&fakeStore{}, &fakeRunner{})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/lineage?sql=/etc/dataguard/secrets/internal.sql", nil)
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", w.Code)
+	}
+}
+
 func TestLineageOK(t *testing.T) {
 	payload := json.RawMessage(`{"target":"t","sources":["s"],"has_cycle":false}`)
 	srv := newTestServer(&fakeStore{}, &fakeRunner{payload: payload})

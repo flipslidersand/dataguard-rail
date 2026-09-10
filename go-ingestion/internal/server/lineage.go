@@ -12,18 +12,24 @@ import (
 
 var lineageTracer = otel.Tracer("dataguard-rail/server")
 
-// validateSQLPath はパストラバーサルを防ぐため入力パスを検証する。
-// ".." を含むパスおよび ".sql" 以外の拡張子を拒否する。
+// validateSQLPath はパストラバーサル・任意ファイル読み取りを防ぐため入力パスを検証する。
+// ".." を含むパス・絶対パス・".sql" 以外の拡張子を拒否し、相対パスのみ許可する。
 func validateSQLPath(p string) bool {
+	if p == "" {
+		return false
+	}
+	if filepath.IsAbs(p) {
+		return false
+	}
 	if strings.Contains(p, "..") {
 		return false
 	}
 	if !strings.HasSuffix(p, ".sql") {
 		return false
 	}
-	// filepath.Clean で正規化後も ".." が現れないことを確認
+	// filepath.Clean で正規化後も ".." が現れないこと・絶対パス化しないことを確認
 	cleaned := filepath.Clean(p)
-	return !strings.Contains(cleaned, "..")
+	return !strings.Contains(cleaned, "..") && !filepath.IsAbs(cleaned)
 }
 
 // handleLineage は GET /api/lineage?sql=path/to/file.sql を処理する。
