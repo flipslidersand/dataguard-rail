@@ -10,5 +10,4 @@ updates:
       - "github-actions"
       - "dependencies"
     commit-message:
-      prefix: "chore"
-      prefix-scope: "deps"
+      prefix: "chore(deps)"
