@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -17,6 +18,14 @@ import (
 // bufio.Scanner のデフォルト 64 KB では base64 埋め込み画像などで失敗するため拡張する。
 const jsonlMaxLineBytes = 10 << 20 // 10 MiB
 
+// MaxCSVRows / MaxJSONLRows は LoadCSV / LoadJSONL が許容する最大データ行数
+// (ヘッダを除く)。postgres.go の MaxPostgresRows と同じ考え方で、
+// 大容量ファイルによる OOM を避けるため超過時はエラーにする。
+const (
+	MaxCSVRows   = 100_000
+	MaxJSONLRows = 100_000
+)
+
 // Dataset は取込んだ表形式データの内部表現。
 type Dataset struct {
 	Headers []string
@@ -24,6 +33,8 @@ type Dataset struct {
 }
 
 // LoadCSV は CSV ファイルを読み込み Dataset にする。
+// ReadAll ではなく Read を1行ずつ呼ぶことで、MaxCSVRows 超過をファイル全体を
+// 読み切る前に検出できる (ReadAll は上限チェック前に全行をメモリに載せてしまう)。
 func LoadCSV(path string) (*Dataset, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -34,19 +45,36 @@ func LoadCSV(path string) (*Dataset, error) {
 	r := csv.NewReader(f)
 	r.FieldsPerRecord = -1 // 行ごとの列数差を許容 (検証は engine 側に委ねる)
 
-	records, err := r.ReadAll()
+	header, err := r.Read()
+	if errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("csv %q: ヘッダがありません", path)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("read csv %q: %w", path, err)
 	}
-	if len(records) == 0 {
-		return nil, fmt.Errorf("csv %q: ヘッダがありません", path)
+
+	var rows [][]string
+	for {
+		record, err := r.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read csv %q: %w", path, err)
+		}
+		if len(rows) >= MaxCSVRows {
+			return nil, fmt.Errorf("csv %q: 行数が上限 %d を超えました", path, MaxCSVRows)
+		}
+		rows = append(rows, record)
 	}
 
-	return &Dataset{Headers: records[0], Rows: records[1:]}, nil
+	return &Dataset{Headers: header, Rows: rows}, nil
 }
 
 // LoadJSONL は JSON Lines ファイル (1行1オブジェクト) を読み込み Dataset にする。
 // カラム順は最初の非空行のキー出現順で確定する。後続行に未知のキーがあれば無視する。
+// 各行は読みながら直接 Dataset.Rows に変換し、ファイル全体の生バイトは保持しない
+// (旧実装は全行の生コピーとパース後の行データを同時に保持しメモリ使用量が実質倍増していた)。
 func LoadJSONL(path string) (*Dataset, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -54,40 +82,37 @@ func LoadJSONL(path string) (*Dataset, error) {
 	}
 	defer f.Close()
 
-	var lines [][]byte
 	scanner := bufio.NewScanner(f)
 	// デフォルト 64 KB を 10 MiB に拡張し、base64 埋め込みなど大行のサイレント失敗を防ぐ。
 	scanner.Buffer(make([]byte, 0, 64*1024), jsonlMaxLineBytes)
+
+	var headers []string
+	var headerIdx map[string]int
+	var rows [][]string
+	lineNo := 0
+
 	for scanner.Scan() {
-		b := scanner.Bytes()
-		if len(b) == 0 {
+		lineNo++
+		line := scanner.Bytes()
+		if len(line) == 0 {
 			continue
 		}
-		cp := make([]byte, len(b))
-		copy(cp, b)
-		lines = append(lines, cp)
-	}
-	if err := scanner.Err(); err != nil {
-		if errors.Is(err, bufio.ErrTooLong) {
-			return nil, fmt.Errorf("scan jsonl %q: 行サイズが上限 (%d bytes) を超えています (base64 埋め込みや巨大フィールドが含まれている可能性があります): %w", path, jsonlMaxLineBytes, err)
+
+		if headers == nil {
+			// 最初の非空行を token レベルで走査してキー挿入順を確定する。
+			headers, headerIdx, err = jsonlHeaders(line)
+			if err != nil {
+				return nil, fmt.Errorf("jsonl %q line %d: %w", path, lineNo, err)
+			}
 		}
-		return nil, fmt.Errorf("scan jsonl %q: %w", path, err)
-	}
-	if len(lines) == 0 {
-		return nil, fmt.Errorf("jsonl %q: 有効な行がありません", path)
-	}
 
-	// 最初の行を token レベルで走査してキー挿入順を確定する。
-	headers, headerIdx, err := jsonlHeaders(lines[0])
-	if err != nil {
-		return nil, fmt.Errorf("jsonl %q line 1: %w", path, err)
-	}
+		if len(rows) >= MaxJSONLRows {
+			return nil, fmt.Errorf("jsonl %q: 行数が上限 %d を超えました", path, MaxJSONLRows)
+		}
 
-	rows := make([][]string, 0, len(lines))
-	for i, line := range lines {
 		var obj map[string]json.RawMessage
 		if err := json.Unmarshal(line, &obj); err != nil {
-			return nil, fmt.Errorf("jsonl %q line %d: %w", path, i+1, err)
+			return nil, fmt.Errorf("jsonl %q line %d: %w", path, lineNo, err)
 		}
 		row := make([]string, len(headers))
 		for k, raw := range obj {
@@ -103,6 +128,16 @@ func LoadJSONL(path string) (*Dataset, error) {
 		}
 		rows = append(rows, row)
 	}
+	if err := scanner.Err(); err != nil {
+		if errors.Is(err, bufio.ErrTooLong) {
+			return nil, fmt.Errorf("scan jsonl %q: 行サイズが上限 (%d bytes) を超えています (base64 埋め込みや巨大フィールドが含まれている可能性があります): %w", path, jsonlMaxLineBytes, err)
+		}
+		return nil, fmt.Errorf("scan jsonl %q: %w", path, err)
+	}
+	if headers == nil {
+		return nil, fmt.Errorf("jsonl %q: 有効な行がありません", path)
+	}
+
 	return &Dataset{Headers: headers, Rows: rows}, nil
 }
 
