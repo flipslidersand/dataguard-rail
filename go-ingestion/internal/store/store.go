@@ -135,7 +135,14 @@ func (s *Store) ListViolationsPaged(limit, offset int) ([]engine.Violation, erro
 	return out, nil
 }
 
+// maxListViolations は ListViolations が一括でメモリに読み込むことを許容する上限件数。
+// これを超えるデータセットでは ListViolationsPaged への切り替えが必要であることを
+// 呼び出し元に知らせるため、超過時はエラーを返す (var なのでテストで上書き可能)。
+var maxListViolations = 100_000
+
 // ListViolations は保存済みの全 violation を prefix scan で返す。
+// maxListViolations 件を超える場合はメモリ圧迫を避けるためエラーを返す
+// (呼び出し元は ListViolationsPaged を使うこと)。
 func (s *Store) ListViolations() ([]engine.Violation, error) {
 	var out []engine.Violation
 	err := s.db.View(func(txn *badger.Txn) error {
@@ -143,6 +150,12 @@ func (s *Store) ListViolations() ([]engine.Violation, error) {
 		defer it.Close()
 		prefix := []byte(keyPrefix)
 		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			if len(out) >= maxListViolations {
+				return fmt.Errorf(
+					"violation count exceeds limit (%d); use ListViolationsPaged instead",
+					maxListViolations,
+				)
+			}
 			err := it.Item().Value(func(val []byte) error {
 				var v engine.Violation
 				if err := json.Unmarshal(val, &v); err != nil {

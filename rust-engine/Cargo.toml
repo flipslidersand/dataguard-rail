@@ -21,7 +21,7 @@ csv = "1"
 regex = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 
-tonic = "0.11"
+tonic = { version = "0.11", features = ["tls"] }
 prost = "0.12"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
@@ -30,3 +30,4 @@ tonic-build = "0.11"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+tempfile = "3"

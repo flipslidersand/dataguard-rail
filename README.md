@@ -94,12 +94,48 @@ dataguard ingest --grpc-addr localhost:50051 \
   --rules examples/rules.yaml
 ```
 
-> **Security / セキュリティ注意:** この gRPC チャネルは TLS 未対応の平文通信です。
-> デフォルトはループバック (`[::1]`) バインドですが、`--addr`/`--grpc-addr` を
-> ループバック外に向けると同一ネットワーク上の攻撃者による中間者攻撃
-> （`csv_path`/`sql_path` の書き換え、`violations_json` の改ざん）が成立します。
-> Go と Rust を別ホストで動かす場合は SSH トンネル等で経路を保護してください
-> （ループバック外バインド時は起動時に警告ログが出力されます）。
+> **Security / セキュリティ注意:** デフォルトはループバック (`[::1]`) バインドで
+> TLS 未対応の平文通信です。`--addr`/`--grpc-addr` を**ループバック外**に向ける場合、
+> TLS/mTLS（下記）または `--insecure`/`--grpc-insecure` の明示的な opt-in が
+> 無いと **起動/接続を拒否**します（中間者攻撃による `csv_path`/`sql_path` の
+> 書き換え、`violations_json` の改ざんを防ぐため）。
+
+#### TLS / mTLS でループバック外の Go↔Rust 通信を保護する
+
+証明書は自己署名 CA で発行できます（社内 CA を使う場合も手順は同様）。
+
+```bash
+# CA
+openssl req -x509 -newkey rsa:2048 -nodes -keyout ca.key -out ca.crt \
+  -days 365 -subj "/CN=dataguard-ca"
+
+# Rust engine のサーバー証明書（bind するホスト名/IPを SAN に含める）
+openssl req -newkey rsa:2048 -nodes -keyout server.key -out server.csr \
+  -subj "/CN=engine.internal" -addext "subjectAltName=DNS:engine.internal"
+openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+  -out server.crt -days 365 -copy_extensions copy
+
+# (mTLS を使う場合) Go 側のクライアント証明書
+openssl req -newkey rsa:2048 -nodes -keyout client.key -out client.csr \
+  -subj "/CN=go-ingestion"
+openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+  -out client.crt -days 365
+```
+
+```bash
+# 1. TLS（--tls-client-ca を付けると mTLS = クライアント証明書必須）
+dataguard-engine serve --addr engine.internal:50051 \
+  --tls-cert server.crt --tls-key server.key --tls-client-ca ca.crt
+
+# 2. Go 側は --grpc-tls-ca で検証、mTLS の場合は --grpc-tls-cert/--grpc-tls-key も指定
+dataguard ingest --grpc-addr engine.internal:50051 \
+  --grpc-tls-ca ca.crt --grpc-tls-cert client.crt --grpc-tls-key client.key \
+  --config examples/sources.yaml --rules examples/rules.yaml
+```
+
+ループバック限定運用で TLS が不要な場合は、既定のまま（`--tls-cert`/`--grpc-tls-ca`
+未指定）で従来通り平文で動作します。ループバック外でどうしても TLS を使わない場合のみ、
+`dataguard-engine serve --insecure` / `dataguard ingest --grpc-insecure` を明示的に指定してください。
 
 ### Daemon mode / スケジューラモード (`--daemon`)
 

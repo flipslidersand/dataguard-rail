@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.uber.org/zap"
 )
 
 var schemaTracer = otel.Tracer("dataguard-rail/server")
@@ -36,8 +37,10 @@ func (s *Server) handleSchemaDiff(c *gin.Context) {
 			attribute.Int("changed", len(diff.Changed)),
 		)
 		if len(diff.Added)+len(diff.Dropped)+len(diff.Changed) > 0 {
-			_ = s.notifier.Notify(ctx, fmt.Sprintf("[dataguard] schema diff detected on %s: +%d -%d ~%d",
-				diff.Table, len(diff.Added), len(diff.Dropped), len(diff.Changed)))
+			if err := s.notifier.Notify(ctx, fmt.Sprintf("[dataguard] schema diff detected on %s: +%d -%d ~%d",
+				diff.Table, len(diff.Added), len(diff.Dropped), len(diff.Changed))); err != nil {
+				s.log.Warn("notify failed", zap.String("table", diff.Table), zap.Error(err))
+			}
 		}
 		c.JSON(http.StatusOK, diff)
 		return
