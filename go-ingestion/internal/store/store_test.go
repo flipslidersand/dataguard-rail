@@ -88,3 +88,45 @@ func TestListEmpty(t *testing.T) {
 		t.Errorf("want 0, got %d", len(got))
 	}
 }
+
+// TestListViolationsExceedsLimitErrors は保存件数が maxListViolations を超える場合、
+// ListViolations が全件メモリ展開を避けてエラーを返すことを確認する
+// (呼び出し元は ListViolationsPaged を使うべきことを示す)。
+func TestListViolationsExceedsLimitErrors(t *testing.T) {
+	orig := maxListViolations
+	maxListViolations = 5
+	defer func() { maxListViolations = orig }()
+
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	vs := make([]engine.Violation, maxListViolations+1)
+	for i := range vs {
+		vs[i] = engine.Violation{ID: fmt.Sprintf("v%d", i), Rule: "r", Table: "t"}
+	}
+	if err := s.SaveViolations(vs); err != nil {
+		t.Fatalf("SaveViolations: %v", err)
+	}
+
+	if _, err := s.ListViolations(); err == nil {
+		t.Fatal("want error when violation count exceeds maxListViolations, got nil")
+	}
+
+	// 上限以下ならこれまで通り成功する。
+	if err := s.db.DropAll(); err != nil {
+		t.Fatalf("DropAll: %v", err)
+	}
+	if err := s.SaveViolations(vs[:maxListViolations]); err != nil {
+		t.Fatalf("SaveViolations: %v", err)
+	}
+	got, err := s.ListViolations()
+	if err != nil {
+		t.Fatalf("ListViolations: %v", err)
+	}
+	if len(got) != maxListViolations {
+		t.Fatalf("want %d violations, got %d", maxListViolations, len(got))
+	}
+}
