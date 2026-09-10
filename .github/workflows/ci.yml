@@ -63,9 +63,12 @@ jobs:
         run: go vet ./...
 
       - name: Go test
-        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+        # internal/pb は protoc 生成コード（DO NOT EDIT）のためカバレッジ計測対象から除外する。
+        # 含めると 0% 固定の統計で total を大きく押し下げ、閾値が実態を測れなくなる。
+        run: go test -race -coverprofile=coverage.out -covermode=atomic $(go list ./... | grep -v /internal/pb)
 
       - name: Coverage threshold
         run: |
           pct=$(go tool cover -func=coverage.out | awk '/^total/ {print $3}' | tr -d '%')
-          awk "BEGIN { if (${pct} < 40) { print \"Coverage \" ${pct} \"% is below 40%\"; exit 1 } }"
+          # internal/pb 除外後の実測(2026-09-10時点) ≈ 52.4%。5〜10 ポイント程度の余裕を見て 45% に設定。
+          awk "BEGIN { if (${pct} < 45) { print \"Coverage \" ${pct} \"% is below 45%\"; exit 1 } }"
