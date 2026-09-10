@@ -279,7 +279,7 @@ func runServe(addr, dbPath, engineBin, grpcAddr, otelEndpoint, slackWebhook, api
 	}
 
 	notifier := alert.NewSlack(slackWebhook)
-	srv := server.New(st, runner, notifier, apiKey)
+	srv := server.New(st, runner, notifier, apiKey, log)
 
 	log.Info("starting server", zap.String("addr", addr))
 	return srv.Run(addr)

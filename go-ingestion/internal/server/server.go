@@ -12,6 +12,7 @@ import (
 	"github.com/flipslidersand/dataguard-rail/internal/engine"
 	"github.com/flipslidersand/dataguard-rail/internal/store"
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 // Storer は violations / schema の読み書きを抽象化する。テストで差し替え可能。
@@ -35,19 +36,23 @@ type Server struct {
 	notifier alert.Notifier
 	engine   *gin.Engine
 	apiKey   string
+	log      *zap.Logger
 }
 
 // New はサーバーインスタンスを生成する。apiKey が空の場合、認証は無効化される
 // (ローカル開発用途のみを想定。本番運用では必ず指定すること)。
-func New(st Storer, runner Runner, notifier alert.Notifier, apiKey string) *Server {
+func New(st Storer, runner Runner, notifier alert.Notifier, apiKey string, log *zap.Logger) *Server {
 	if notifier == nil {
 		notifier = alert.NoopNotifier{}
+	}
+	if log == nil {
+		log = zap.NewNop()
 	}
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
 
-	s := &Server{store: st, runner: runner, notifier: notifier, engine: r, apiKey: apiKey}
+	s := &Server{store: st, runner: runner, notifier: notifier, engine: r, apiKey: apiKey, log: log}
 	s.registerRoutes()
 	return s
 }
