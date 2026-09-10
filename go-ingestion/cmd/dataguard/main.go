@@ -17,6 +17,7 @@ import (
 	"github.com/flipslidersand/dataguard-rail/internal/store"
 	"github.com/flipslidersand/dataguard-rail/internal/telemetry"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 )
 
@@ -34,6 +35,15 @@ func main() {
 	}
 }
 
+// addGrpcTLSFlags は Go↔Rust gRPC チャネルの TLS/mTLS フラグを登録する。
+// ingest / serve の両サブコマンドで共通。
+func addGrpcTLSFlags(f *pflag.FlagSet, tlsCfg *engine.GrpcTLSConfig) {
+	f.StringVar(&tlsCfg.CAFile, "grpc-tls-ca", "", "dataguard-engine サーバー証明書を検証する CA 証明書 (PEM)")
+	f.StringVar(&tlsCfg.CertFile, "grpc-tls-cert", "", "mTLS 用クライアント証明書 (PEM、--grpc-tls-key と併用)")
+	f.StringVar(&tlsCfg.KeyFile, "grpc-tls-key", "", "mTLS 用クライアント秘密鍵 (PEM、--grpc-tls-cert と併用)")
+	f.BoolVar(&tlsCfg.Insecure, "grpc-insecure", false, "ループバック外でも TLS なし平文通信を明示的に許可する（非推奨）")
+}
+
 func newIngestCmd() *cobra.Command {
 	var (
 		configPath string
@@ -43,6 +53,7 @@ func newIngestCmd() *cobra.Command {
 		grpcAddr   string
 		tmpDir     string
 		daemon     bool
+		grpcTLS    engine.GrpcTLSConfig
 	)
 	cmd := &cobra.Command{
 		Use:   "ingest",
@@ -51,9 +62,9 @@ func newIngestCmd() *cobra.Command {
 			otelEndpoint, _ := cmd.Root().PersistentFlags().GetString("otel-endpoint")
 			slackWebhook, _ := cmd.Root().PersistentFlags().GetString("slack-webhook")
 			if daemon {
-				return runDaemon(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelEndpoint, slackWebhook)
+				return runDaemon(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelEndpoint, slackWebhook, grpcTLS)
 			}
-			return runIngest(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelEndpoint, slackWebhook)
+			return runIngest(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelEndpoint, slackWebhook, grpcTLS)
 		},
 	}
 	f := cmd.Flags()
@@ -64,10 +75,11 @@ func newIngestCmd() *cobra.Command {
 	f.StringVar(&grpcAddr, "grpc-addr", "", "dataguard-engine gRPC アドレス（例: localhost:50051）")
 	f.StringVar(&tmpDir, "tmp", "", "一時 CSV の出力先 (既定: OS の一時ディレクトリ)")
 	f.BoolVar(&daemon, "daemon", false, "sources.yaml の schedule に従って定期実行するデーモンモード")
+	addGrpcTLSFlags(f, &grpcTLS)
 	return cmd
 }
 
-func runIngest(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelEndpoint, slackWebhook string) error {
+func runIngest(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelEndpoint, slackWebhook string, grpcTLS engine.GrpcTLSConfig) error {
 	ctx := context.Background()
 	log, _ := zap.NewProduction()
 	defer func() { _ = log.Sync() }()
@@ -97,7 +109,7 @@ func runIngest(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelE
 
 	var runner pipeline.Checker
 	if grpcAddr != "" {
-		gr, err := engine.NewGrpc(grpcAddr)
+		gr, err := engine.NewGrpc(grpcAddr, grpcTLS)
 		if err != nil {
 			return err
 		}
@@ -125,7 +137,7 @@ func runIngest(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelE
 	return nil
 }
 
-func runDaemon(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelEndpoint, slackWebhook string) error {
+func runDaemon(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelEndpoint, slackWebhook string, grpcTLS engine.GrpcTLSConfig) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	log, _ := zap.NewProduction()
@@ -156,7 +168,7 @@ func runDaemon(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelE
 
 	var runner pipeline.Checker
 	if grpcAddr != "" {
-		gr, err := engine.NewGrpc(grpcAddr)
+		gr, err := engine.NewGrpc(grpcAddr, grpcTLS)
 		if err != nil {
 			return err
 		}
@@ -211,6 +223,7 @@ func newServeCmd() *cobra.Command {
 		engineBin string
 		grpcAddr  string
 		apiKey    string
+		grpcTLS   engine.GrpcTLSConfig
 	)
 	cmd := &cobra.Command{
 		Use:   "serve",
@@ -218,7 +231,7 @@ func newServeCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			otelEndpoint, _ := cmd.Root().PersistentFlags().GetString("otel-endpoint")
 			slackWebhook, _ := cmd.Root().PersistentFlags().GetString("slack-webhook")
-			return runServe(addr, dbPath, engineBin, grpcAddr, otelEndpoint, slackWebhook, apiKey)
+			return runServe(addr, dbPath, engineBin, grpcAddr, otelEndpoint, slackWebhook, apiKey, grpcTLS)
 		},
 	}
 	f := cmd.Flags()
@@ -227,10 +240,11 @@ func newServeCmd() *cobra.Command {
 	f.StringVar(&engineBin, "engine-bin", engine.DefaultBin, "dataguard-engine バイナリのパス（--grpc-addr 未指定時）")
 	f.StringVar(&grpcAddr, "grpc-addr", "", "dataguard-engine gRPC アドレス（例: localhost:50051）")
 	f.StringVar(&apiKey, "api-key", "", "API 認証キー（未指定=認証無効。本番運用では必須）")
+	addGrpcTLSFlags(f, &grpcTLS)
 	return cmd
 }
 
-func runServe(addr, dbPath, engineBin, grpcAddr, otelEndpoint, slackWebhook, apiKey string) error {
+func runServe(addr, dbPath, engineBin, grpcAddr, otelEndpoint, slackWebhook, apiKey string, grpcTLS engine.GrpcTLSConfig) error {
 	ctx := context.Background()
 	log, _ := zap.NewProduction()
 	defer func() { _ = log.Sync() }()
@@ -254,7 +268,7 @@ func runServe(addr, dbPath, engineBin, grpcAddr, otelEndpoint, slackWebhook, api
 
 	var runner server.Runner
 	if grpcAddr != "" {
-		gr, err := engine.NewGrpc(grpcAddr)
+		gr, err := engine.NewGrpc(grpcAddr, grpcTLS)
 		if err != nil {
 			return err
 		}

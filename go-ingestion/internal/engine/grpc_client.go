@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/flipslidersand/dataguard-rail/internal/pb"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
@@ -19,14 +22,64 @@ type GrpcRunner struct {
 	client pb.DataGuardClient
 }
 
+// GrpcTLSConfig は Go↔Rust gRPC チャネルの TLS/mTLS 設定。
+// CAFile が空の場合は TLS を要求しない（ループバック外では Insecure が明示されない限り拒否する）。
+type GrpcTLSConfig struct {
+	CAFile   string // サーバー証明書を検証する CA 証明書 (PEM)
+	CertFile string // mTLS 用クライアント証明書 (PEM、任意)
+	KeyFile  string // mTLS 用クライアント秘密鍵 (PEM、任意)
+	Insecure bool   // ループバック外でも平文通信を明示的に許可する
+}
+
 // NewGrpc は addr の gRPC サーバーに接続する。
-func NewGrpc(addr string) (*GrpcRunner, error) {
-	warnIfNotLoopback(addr)
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+func NewGrpc(addr string, tlsCfg GrpcTLSConfig) (*GrpcRunner, error) {
+	creds, err := buildTransportCredentials(addr, tlsCfg)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
 	if err != nil {
 		return nil, fmt.Errorf("grpc dial %q: %w", addr, err)
 	}
 	return &GrpcRunner{conn: conn, client: pb.NewDataGuardClient(conn)}, nil
+}
+
+// buildTransportCredentials は tlsCfg から gRPC 用の TransportCredentials を組み立てる。
+// CAFile 未指定（TLS 無効）でループバック外の addr かつ Insecure でない場合はエラーを返し、
+// 平文で中間者攻撃に晒される接続を拒否する。
+func buildTransportCredentials(addr string, tlsCfg GrpcTLSConfig) (credentials.TransportCredentials, error) {
+	if tlsCfg.CAFile == "" {
+		if !isLoopbackAddr(addr) && !tlsCfg.Insecure {
+			return nil, fmt.Errorf(
+				"refusing plaintext gRPC connection to non-loopback addr %q: "+
+					"specify --grpc-tls-ca or pass --grpc-insecure to opt in explicitly", addr)
+		}
+		warnIfNotLoopback(addr)
+		return insecure.NewCredentials(), nil
+	}
+
+	caPEM, err := os.ReadFile(tlsCfg.CAFile)
+	if err != nil {
+		return nil, fmt.Errorf("read --grpc-tls-ca %q: %w", tlsCfg.CAFile, err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("--grpc-tls-ca %q contains no valid PEM certificate", tlsCfg.CAFile)
+	}
+	tlsConf := &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+
+	if tlsCfg.CertFile != "" || tlsCfg.KeyFile != "" {
+		if tlsCfg.CertFile == "" || tlsCfg.KeyFile == "" {
+			return nil, fmt.Errorf("--grpc-tls-cert and --grpc-tls-key must be set together for mTLS")
+		}
+		cert, err := tls.LoadX509KeyPair(tlsCfg.CertFile, tlsCfg.KeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("load client cert/key: %w", err)
+		}
+		tlsConf.Certificates = []tls.Certificate{cert}
+	}
+
+	return credentials.NewTLS(tlsConf), nil
 }
 
 // warnIfNotLoopback はループバック外へ接続しようとした際に stderr へ警告を出す。
