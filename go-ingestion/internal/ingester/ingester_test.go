@@ -1,8 +1,9 @@
 package ingester
 
 import (
-	"errors"
 	"bufio"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -113,6 +114,31 @@ func TestLoadCSVErrors(t *testing.T) {
 	}
 	if _, err := LoadCSV(writeCSV(t, "")); err == nil {
 		t.Error("expected error for empty file")
+	}
+}
+
+// TestLoadCSVMaxRows は MaxCSVRows を超える CSV がエラーになることを確認する（#100）。
+func TestLoadCSVMaxRows(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("id\n")
+	for i := 0; i < MaxCSVRows+1; i++ {
+		fmt.Fprintf(&b, "%d\n", i)
+	}
+	_, err := LoadCSV(writeCSV(t, b.String()))
+	if err == nil || !strings.Contains(err.Error(), "上限") {
+		t.Errorf("expected max rows error, got: %v", err)
+	}
+}
+
+// TestLoadJSONLMaxRows は MaxJSONLRows を超える JSONL がエラーになることを確認する（#100）。
+func TestLoadJSONLMaxRows(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < MaxJSONLRows+1; i++ {
+		fmt.Fprintf(&b, `{"id":%d}`+"\n", i)
+	}
+	_, err := LoadJSONL(writeJSONL(t, b.String()))
+	if err == nil || !strings.Contains(err.Error(), "上限") {
+		t.Errorf("expected max rows error, got: %v", err)
 	}
 }
 
