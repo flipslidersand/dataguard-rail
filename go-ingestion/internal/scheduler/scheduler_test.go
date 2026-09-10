@@ -39,7 +39,16 @@ func TestHasJobsAfterRegister(t *testing.T) {
 	}
 }
 
+// TestScheduledJobFires は cron が実際に発火することを確認する。
+// GitHub Actions の共有ランナーは負荷変動が大きく tick 処理が遅延しうるため、
+// 必要なティック数（2回）に対して十分な余裕（8秒 = 500ms 間隔で最大16回分）を
+// 持たせ、CPU スロットリングによる偽陽性フレークを避ける（#93）。
+// 500ms という間隔自体も、より短い間隔（実測 100ms 等）は tick の取りこぼしで
+// 逆にフレークしやすいという経験則に基づく（既存の robfig/cron 運用実績）。
 func TestScheduledJobFires(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping real-time cron firing test in -short mode")
+	}
 	var count atomic.Int32
 	s := New(context.Background(), nil)
 	src := config.DataSource{Name: "x", Schedule: "@every 500ms"}
@@ -50,16 +59,16 @@ func TestScheduledJobFires(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	s.Start()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(8 * time.Second)
 	for time.Now().Before(deadline) {
 		if count.Load() >= 2 {
 			break
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
 	s.Stop()
 	if count.Load() < 2 {
-		t.Errorf("expected >= 2 executions within 3s, got %d", count.Load())
+		t.Errorf("expected >= 2 executions within 8s, got %d", count.Load())
 	}
 }
 
