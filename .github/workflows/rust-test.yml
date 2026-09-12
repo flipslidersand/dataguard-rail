@@ -1,0 +1,19 @@
+name: Rust Test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  rust-engine:
+    uses: flipslidersand-labs/qa-workflows/.github/workflows/rust-test.yml@main
+    with:
+      working-directory: rust-engine
+      system-deps: protobuf-compiler # build.rs (tonic-build) が proto をコンパイルするため必要
+      coverage-threshold: 75 # 実測(2026-09-13) 86.8%。段階引き上げ余地を残して初期値を設定
+      # dtolnay/rust-toolchain が self-hosted (linux-general) の一部 Pod で
+      # ~/.cargo/bin への書き込みに失敗する既知の問題があるため GitHub-hosted に固定
+      # （sentinel-mesh#112 と同種の事象。トラッキング: flipslidersand-labs/dev-platform#1065）。
+      runner: ubuntu-latest
