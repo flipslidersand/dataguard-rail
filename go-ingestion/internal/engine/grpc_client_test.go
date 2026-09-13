@@ -1,10 +1,12 @@
 package engine
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // genTestCA/genTestCert は openssl CLI で自己署名 CA と、その CA が署名したリーフ証明書を生成する。
@@ -119,6 +121,41 @@ func TestBuildTransportCredentials_InvalidCAFile(t *testing.T) {
 	}
 	if _, err := buildTransportCredentials("engine.internal:50051", GrpcTLSConfig{CAFile: badCA}); err == nil {
 		t.Fatal("expected error for invalid CA file content")
+	}
+}
+
+// TestWithDefaultTimeoutAppliesWhenNoDeadline は deadline 無し context に
+// DefaultRPCTimeout が付与されることを確認する（#94）。
+func TestWithDefaultTimeoutAppliesWhenNoDeadline(t *testing.T) {
+	ctx, cancel := withDefaultTimeout(context.Background())
+	defer cancel()
+
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("expected a deadline to be set")
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 || remaining > DefaultRPCTimeout {
+		t.Errorf("expected remaining time in (0, %v], got %v", DefaultRPCTimeout, remaining)
+	}
+}
+
+// TestWithDefaultTimeoutPreservesExistingDeadline は呼び出し元が既に
+// deadline を設定している場合、それを上書きしないことを確認する（#94）。
+func TestWithDefaultTimeoutPreservesExistingDeadline(t *testing.T) {
+	want := time.Now().Add(1 * time.Second)
+	parent, parentCancel := context.WithDeadline(context.Background(), want)
+	defer parentCancel()
+
+	ctx, cancel := withDefaultTimeout(parent)
+	defer cancel()
+
+	got, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("expected a deadline to be set")
+	}
+	if !got.Equal(want) {
+		t.Errorf("expected original deadline %v to be preserved, got %v", want, got)
 	}
 }
 
