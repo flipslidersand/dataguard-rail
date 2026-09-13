@@ -58,6 +58,16 @@ func newIngestCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ingest",
 		Short: "Ingest data sources, run quality checks via the Rust engine, persist violations",
+		Long: `sources.yaml のデータソースを読み込み、rules.yaml の品質ルールを Rust engine
+（exec または --grpc-addr 指定時は gRPC）で評価し、violation を BadgerDB へ保存する。
+違反が検知されると Slack Webhook（--slack-webhook / グローバルフラグ）へ通知する。
+
+--daemon を付けると、schedule フィールドを持つソースを cron で定期実行するデーモン
+モードになる（schedule なしのソースは起動時に一度だけ即時実行される）。--daemon が
+無い場合は全ソースを一度だけ実行して終了する。`,
+		Example: `  dataguard ingest --config sources.yaml --rules rules.yaml
+  dataguard ingest --config sources.yaml --rules rules.yaml --daemon
+  dataguard ingest --config sources.yaml --rules rules.yaml --grpc-addr localhost:50051`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			otelEndpoint, _ := cmd.Root().PersistentFlags().GetString("otel-endpoint")
 			slackWebhook, _ := cmd.Root().PersistentFlags().GetString("slack-webhook")
@@ -228,6 +238,14 @@ func newServeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Start REST API server",
+		Long: `violations・schema-diff・lineage を閲覧できる REST API + Web ダッシュボード
+（GET /）を起動する。バックエンドの解析は --grpc-addr 指定時は常駐 gRPC サーバー、
+未指定時は engine バイナリの都度 exec で行う。
+
+--api-key は必須。未指定のまま起動すると（環境変数 DATAGUARD_ALLOW_INSECURE=1 を
+明示しない限り）起動を拒否する — /api と / の無認証公開を防ぐため。`,
+		Example: `  dataguard serve --addr :8080 --api-key "$(gopass show -o infra/dataguard-rail/api-key)"
+  dataguard serve --addr :8080 --grpc-addr localhost:50051 --api-key "$API_KEY"`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			otelEndpoint, _ := cmd.Root().PersistentFlags().GetString("otel-endpoint")
 			slackWebhook, _ := cmd.Root().PersistentFlags().GetString("slack-webhook")
