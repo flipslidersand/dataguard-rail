@@ -1,0 +1,14 @@
+name: Dependabot Auto-merge (minor, 24h wait)
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  promote:
+    uses: flipslidersand-labs/qa-workflows/.github/workflows/dependabot-auto-merge-minor.yml@feat/dependabot-auto-merge-reusable
