@@ -1,11 +1,11 @@
 module github.com/flipslidersand/dataguard-rail
 
-go 1.24.0
+go 1.25.0
 
 require (
 	github.com/dgraph-io/badger/v4 v4.9.6
 	github.com/gin-gonic/gin v1.10.0
-	github.com/jackc/pgx/v5 v5.5.0
+	github.com/jackc/pgx/v5 v5.11.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/pflag v1.0.6
