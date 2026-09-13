@@ -130,21 +130,21 @@ func runIngest(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelE
 	}
 
 	results, err := pipeline.Run(ctx, cfg, rulesPath, td, pipeline.DefaultLoader{}, runner, st, notifier, log)
-	if err != nil {
-		return err
-	}
 
 	total := 0
 	for _, r := range results {
-		if r.Skipped {
+		switch {
+		case r.Err != nil:
+			fmt.Printf("- %s: failed (%s)\n", r.Source, r.Err)
+		case r.Skipped:
 			fmt.Printf("- %s: skipped (%s)\n", r.Source, r.Reason)
-			continue
+		default:
+			total += r.Violations
+			fmt.Printf("- %s: %d violation(s)\n", r.Source, r.Violations)
 		}
-		total += r.Violations
-		fmt.Printf("- %s: %d violation(s)\n", r.Source, r.Violations)
 	}
 	fmt.Printf("ingest complete: %d violation(s) across %d source(s) → %s\n", total, len(results), dbPath)
-	return nil
+	return err
 }
 
 func runDaemon(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelEndpoint, slackWebhook string, grpcTLS engine.GrpcTLSConfig) error {
