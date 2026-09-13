@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/flipslidersand/dataguard-rail/internal/alert"
 	"github.com/flipslidersand/dataguard-rail/internal/engine"
@@ -90,8 +91,17 @@ func (s *Server) authMiddleware() gin.HandlerFunc {
 }
 
 // Run は addr でリッスンを開始する。
+// Slowloris 型のリソース枯渇を防ぐため、明示的な http.Server でタイムアウトを設定する。
 func (s *Server) Run(addr string) error {
-	return s.engine.Run(addr)
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           s.engine,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	return srv.ListenAndServe()
 }
 
 // Handler はテスト用に gin.Engine を返す。
