@@ -21,18 +21,34 @@ type fakeStore struct {
 	diffs      []store.SchemaDiff
 }
 
-func (f *fakeStore) ListViolations() ([]engine.Violation, error) { return f.violations, nil }
-func (f *fakeStore) CountViolations() (int, error)               { return len(f.violations), nil }
+func (f *fakeStore) CountViolations() (int, error) { return len(f.violations), nil }
 func (f *fakeStore) ListViolationsPaged(limit, offset int) ([]engine.Violation, error) {
-	all := f.violations
+	return pageViolations(f.violations, limit, offset), nil
+}
+func (f *fakeStore) CountViolationsByTable(table string) (int, error) {
+	return len(f.violationsByTable(table)), nil
+}
+func (f *fakeStore) ListViolationsByTablePaged(table string, limit, offset int) ([]engine.Violation, error) {
+	return pageViolations(f.violationsByTable(table), limit, offset), nil
+}
+func (f *fakeStore) violationsByTable(table string) []engine.Violation {
+	matched := make([]engine.Violation, 0)
+	for _, v := range f.violations {
+		if v.Table == table {
+			matched = append(matched, v)
+		}
+	}
+	return matched
+}
+func pageViolations(all []engine.Violation, limit, offset int) []engine.Violation {
 	if offset >= len(all) {
-		return []engine.Violation{}, nil
+		return []engine.Violation{}
 	}
 	end := offset + limit
 	if limit <= 0 || end > len(all) {
 		end = len(all)
 	}
-	return all[offset:end], nil
+	return all[offset:end]
 }
 func (f *fakeStore) LatestDiff(_ string) (*store.SchemaDiff, error) { return f.diff, nil }
 func (f *fakeStore) ListDiffs() ([]store.SchemaDiff, error)         { return f.diffs, nil }

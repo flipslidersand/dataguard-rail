@@ -42,6 +42,55 @@ func TestSaveAndListViolations(t *testing.T) {
 	}
 }
 
+// TestListAndCountViolationsByTable は table ごとの prefix scan が、他 table の
+// violation を混入させず正しく件数・ページングを返すことを確認する（#99）。
+func TestListAndCountViolationsByTable(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	in := []engine.Violation{
+		{ID: "v1", Rule: "r", Table: "products", Row: 1},
+		{ID: "v2", Rule: "r", Table: "products", Row: 2},
+		{ID: "v3", Rule: "r", Table: "products", Row: 3},
+		{ID: "v1", Rule: "r", Table: "stock", Row: 1},
+	}
+	if err := s.SaveViolations(in); err != nil {
+		t.Fatalf("SaveViolations: %v", err)
+	}
+
+	count, err := s.CountViolationsByTable("products")
+	if err != nil {
+		t.Fatalf("CountViolationsByTable: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("want 3 products violations, got %d", count)
+	}
+
+	if count, err := s.CountViolationsByTable("stock"); err != nil || count != 1 {
+		t.Errorf("want 1 stock violation, got %d (err=%v)", count, err)
+	}
+
+	if count, err := s.CountViolationsByTable("nonexistent"); err != nil || count != 0 {
+		t.Errorf("want 0 for nonexistent table, got %d (err=%v)", count, err)
+	}
+
+	page, err := s.ListViolationsByTablePaged("products", 2, 1)
+	if err != nil {
+		t.Fatalf("ListViolationsByTablePaged: %v", err)
+	}
+	if len(page) != 2 {
+		t.Fatalf("want 2 violations in page, got %d", len(page))
+	}
+	for _, v := range page {
+		if v.Table != "products" {
+			t.Errorf("expected only products violations, got table=%s", v.Table)
+		}
+	}
+}
+
 // TestSaveViolationsLargeBatch はバッチ境界をまたぐ件数（txnBatchSize+1）で
 // SaveViolations が全件保存できることを確認する。
 func TestSaveViolationsLargeBatch(t *testing.T) {

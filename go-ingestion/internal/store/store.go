@@ -99,6 +99,70 @@ func (s *Store) CountViolations() (int, error) {
 	return count, nil
 }
 
+// tableKeyPrefix は table 単位の violation キープレフィックスを組み立てる
+// (`violation:<table>:`)。key() が既に `violation:<table>:<id>` の形式で
+// 保存しているため、table フィルタは追加インデックス無しで prefix scan だけで済む。
+func tableKeyPrefix(table string) []byte {
+	return []byte(fmt.Sprintf("%s%s:", keyPrefix, table))
+}
+
+// CountViolationsByTable は指定 table の violation 件数をキーオンリースキャンで返す。
+func (s *Store) CountViolationsByTable(table string) (int, error) {
+	count := 0
+	err := s.db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = false
+		it := txn.NewIterator(opts)
+		defer it.Close()
+		prefix := tableKeyPrefix(table)
+		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			count++
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count violations by table: %w", err)
+	}
+	return count, nil
+}
+
+// ListViolationsByTablePaged は指定 table に絞った violation を offset から
+// 最大 limit 件返す。limit <= 0 は制限なし。ListViolationsPaged 同様、
+// 全件ロードせず prefix scan + skip/limit だけで完結する。
+func (s *Store) ListViolationsByTablePaged(table string, limit, offset int) ([]engine.Violation, error) {
+	var out []engine.Violation
+	err := s.db.View(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer it.Close()
+		prefix := tableKeyPrefix(table)
+		skipped := 0
+		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			if skipped < offset {
+				skipped++
+				continue
+			}
+			if limit > 0 && len(out) >= limit {
+				break
+			}
+			if err := it.Item().Value(func(val []byte) error {
+				var v engine.Violation
+				if err := json.Unmarshal(val, &v); err != nil {
+					return err
+				}
+				out = append(out, v)
+				return nil
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list violations by table paged: %w", err)
+	}
+	return out, nil
+}
+
 // ListViolationsPaged は offset から最大 limit 件の violation を返す。
 // limit <= 0 は制限なし。
 func (s *Store) ListViolationsPaged(limit, offset int) ([]engine.Violation, error) {
