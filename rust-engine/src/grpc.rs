@@ -22,7 +22,7 @@ fn validate_path(path: &str, allowed_exts: &[&str]) -> Result<(), Status> {
         .extension()
         .map(|e| allowed_exts.iter().any(|ext| e.eq_ignore_ascii_case(ext)))
         .unwrap_or(false);
-    if has_parent_dir || !has_allowed_ext {
+    if p.is_absolute() || has_parent_dir || !has_allowed_ext {
         return Err(Status::invalid_argument(format!("無効なパスです: {path}")));
     }
     Ok(())
@@ -85,6 +85,13 @@ mod tests {
     fn validate_path_rejects_parent_dir_traversal() {
         assert!(validate_path("../../etc/passwd.csv", &["csv"]).is_err());
         assert!(validate_path("data/../../secret.sql", &["sql"]).is_err());
+    }
+
+    #[test]
+    fn validate_path_rejects_absolute_path() {
+        assert!(validate_path("/etc/passwd.csv", &["csv"]).is_err());
+        assert!(validate_path("/etc/passwd.sql", &["sql"]).is_err());
+        assert!(validate_path("/etc/passwd.yaml", &["yaml", "yml"]).is_err());
     }
 
     #[test]
