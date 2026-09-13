@@ -11,4 +11,4 @@ permissions:
 jobs:
   triage:
     if: github.actor == 'dependabot[bot]'
-    uses: flipslidersand-labs/qa-workflows/.github/workflows/dependabot-auto-merge.yml@feat/dependabot-auto-merge-reusable
+    uses: flipslidersand-labs/qa-workflows/.github/workflows/dependabot-auto-merge.yml@d114211a23c11813b0dcc886c0aa5e9c10f6585d
