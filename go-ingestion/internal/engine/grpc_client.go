@@ -8,11 +8,26 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"time"
 
 	"github.com/flipslidersand/dataguard-rail/internal/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
+)
+
+const (
+	// DefaultRPCTimeout は呼び出し元が deadline 無しの context (例: context.Background())
+	// を渡した場合に適用するデフォルトタイムアウト。エンジン側プロセスのハングや
+	// サイレントなネットワーク断（TCP RST を伴わない片方向切断）で RPC が
+	// 永久にブロックし続けるのを防ぐ。
+	DefaultRPCTimeout = 5 * time.Minute
+
+	// MaxMsgSize は Analyze/Check レスポンス（lineage_json/violations_json）の
+	// 送受信サイズ上限。grpc-go の既定 4MiB では大容量 CSV や最大10万行の
+	// Postgres 結果由来の violations_json が超過しうるため引き上げる。
+	MaxMsgSize = 64 << 20 // 64MiB
 )
 
 // GrpcRunner は dataguard-engine gRPC サーバーに接続するクライアント。
@@ -37,11 +52,33 @@ func NewGrpc(addr string, tlsCfg GrpcTLSConfig) (*GrpcRunner, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
+	conn, err := grpc.NewClient(addr,
+		grpc.WithTransportCredentials(creds),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                30 * time.Second,
+			Timeout:             10 * time.Second,
+			PermitWithoutStream: true,
+		}),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(MaxMsgSize),
+			grpc.MaxCallSendMsgSize(MaxMsgSize),
+		),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("grpc dial %q: %w", addr, err)
 	}
 	return &GrpcRunner{conn: conn, client: pb.NewDataGuardClient(conn)}, nil
+}
+
+// withDefaultTimeout は ctx に deadline が設定されていない場合、
+// DefaultRPCTimeout を付与した context を返す。呼び出し元は返された
+// cancel を必ず defer で呼ぶこと（deadline 済みの ctx ではキャンセル済み
+// 元の cancel を壊さないよう no-op を返す）。
+func withDefaultTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, DefaultRPCTimeout)
 }
 
 // buildTransportCredentials は tlsCfg から gRPC 用の TransportCredentials を組み立てる。
@@ -114,6 +151,8 @@ func (g *GrpcRunner) Close() error {
 
 // Analyze は Rust engine の analyze RPC を呼び出し、リネージュ JSON を返す。
 func (g *GrpcRunner) Analyze(ctx context.Context, sqlPath string) (json.RawMessage, error) {
+	ctx, cancel := withDefaultTimeout(ctx)
+	defer cancel()
 	resp, err := g.client.Analyze(ctx, &pb.AnalyzeRequest{SqlPath: sqlPath})
 	if err != nil {
 		return nil, fmt.Errorf("grpc Analyze: %w", err)
@@ -123,6 +162,8 @@ func (g *GrpcRunner) Analyze(ctx context.Context, sqlPath string) (json.RawMessa
 
 // Check は Rust engine の check RPC を呼び出し、violations を返す。
 func (g *GrpcRunner) Check(ctx context.Context, csvPath, rulesPath string) ([]Violation, error) {
+	ctx, cancel := withDefaultTimeout(ctx)
+	defer cancel()
 	resp, err := g.client.Check(ctx, &pb.CheckRequest{
 		CsvPath:   csvPath,
 		RulesPath: rulesPath,
