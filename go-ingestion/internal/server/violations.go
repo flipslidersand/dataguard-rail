@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/flipslidersand/dataguard-rail/internal/engine"
 	"github.com/gin-gonic/gin"
 )
 
@@ -43,30 +42,22 @@ func (s *Server) handleViolations(c *gin.Context) {
 		return
 	}
 
-	// table フィルタ付き: 全件取得後にフィルタ・ページネーション。
-	all, err := s.store.ListViolations()
+	// table フィルタ付き: BadgerDB のキーが `violation:<table>:<id>` 形式で
+	// 保存されているため、table ごとの prefix scan + ページングだけで完結し、
+	// 全件ロード・Go 側フィルタは不要（#99）。
+	total, err := s.store.CountViolationsByTable(table)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	c.Header("X-Total-Count", strconv.Itoa(total))
 
-	matched := make([]engine.Violation, 0)
-	for _, v := range all {
-		if v.Table == table {
-			matched = append(matched, v)
-		}
+	violations, err := s.store.ListViolationsByTablePaged(table, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
-	c.Header("X-Total-Count", strconv.Itoa(len(matched)))
-
-	start := offset
-	if start > len(matched) {
-		start = len(matched)
-	}
-	end := start + limit
-	if limit <= 0 || end > len(matched) {
-		end = len(matched)
-	}
-	c.JSON(http.StatusOK, matched[start:end])
+	c.JSON(http.StatusOK, violations)
 }
 
 func parsePagination(c *gin.Context) (limit, offset int, err error) {
