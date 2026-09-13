@@ -188,6 +188,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn refuses_tls_client_ca_without_cert_and_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let ca_path = dir.path().join("ca.pem");
+        std::fs::write(
+            &ca_path,
+            "not a real cert, just needs to exist as an Option",
+        )
+        .unwrap();
+
+        let err = run_serve(
+            "127.0.0.1:0".to_string(),
+            None,
+            None,
+            Some(ca_path.to_str().unwrap().to_string()),
+            false,
+        )
+        .await
+        .expect_err("expected refusal when --tls-client-ca is given without --tls-cert/--tls-key");
+        assert!(
+            err.to_string().contains("--tls-client-ca"),
+            "error should mention --tls-client-ca: {err}"
+        );
+    }
+
+    #[tokio::test]
     async fn mtls_handshake_succeeds_with_trusted_client_cert_and_fails_with_untrusted_one() {
         if !openssl_available() {
             eprintln!("skipping: openssl not found in PATH");

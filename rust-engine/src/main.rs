@@ -183,6 +183,12 @@ async fn run_serve(
             Some(cfg)
         }
         (None, None) => {
+            if tls_client_ca.is_some() {
+                anyhow::bail!(
+                    "--tls-client-ca requires --tls-cert and --tls-key to also be set: \
+                     mTLS client verification cannot be configured without a server identity."
+                );
+            }
             if !addr_parsed.ip().is_loopback() && !insecure {
                 anyhow::bail!(
                     "refusing to bind {addr} without TLS: this addr is not loopback. \
