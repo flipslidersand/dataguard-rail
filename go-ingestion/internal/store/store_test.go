@@ -1,8 +1,10 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/flipslidersand/dataguard-rail/internal/engine"
 )
@@ -177,5 +179,65 @@ func TestListViolationsExceedsLimitErrors(t *testing.T) {
 	}
 	if len(got) != maxListViolations {
 		t.Fatalf("want %d violations, got %d", maxListViolations, len(got))
+	}
+}
+
+// TestRunGCStopsOnContextCancel は #136: RunGC が ctx キャンセルで確実に
+// リターンし、goroutine としてリークしないことを確認する。
+func TestRunGCStopsOnContextCancel(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	origInterval := gcInterval
+	gcInterval = 5 * time.Millisecond
+	defer func() { gcInterval = origInterval }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		s.RunGC(ctx, nil)
+		close(done)
+	}()
+
+	// 少なくとも1回は ticker が発火し RunValueLogGC を試みる時間を与える。
+	time.Sleep(30 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("RunGC did not return after ctx cancellation")
+	}
+}
+
+// TestRunGCIgnoresNoRewrite は #136: 空DB（GC対象なし）でも RunGC が
+// パニックやハングせず ErrNoRewrite を静かに無視することを確認する。
+func TestRunGCIgnoresNoRewrite(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	origInterval := gcInterval
+	gcInterval = 5 * time.Millisecond
+	defer func() { gcInterval = origInterval }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		s.RunGC(ctx, nil)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("RunGC did not return within timeout")
 	}
 }

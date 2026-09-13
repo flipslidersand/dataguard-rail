@@ -176,6 +176,11 @@ func runDaemon(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelE
 	}
 	defer st.Close()
 
+	// daemon は長時間稼働するため、SaveViolations の上書きで無効化された
+	// 古い value log を定期GCしないとディスク使用量が単調増加し続ける（#136）。
+	// ingest の単発実行では不要なのでここでのみ起動する。
+	go st.RunGC(ctx, log)
+
 	var runner pipeline.Checker
 	if grpcAddr != "" {
 		gr, err := engine.NewGrpc(grpcAddr, grpcTLS)

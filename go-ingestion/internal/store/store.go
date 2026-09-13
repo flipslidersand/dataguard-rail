@@ -2,11 +2,15 @@
 package store
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"time"
 
 	badger "github.com/dgraph-io/badger/v4"
 	"github.com/flipslidersand/dataguard-rail/internal/engine"
+	"go.uber.org/zap"
 )
 
 // keyPrefix は violation レコードの key プレフィックス (`violation:<table>:<id>`)。
@@ -30,6 +34,47 @@ func Open(path string) (*Store, error) {
 // Close は DB を閉じる。
 func (s *Store) Close() error {
 	return s.db.Close()
+}
+
+// gcInterval は RunGC が db.RunValueLogGC を試みる間隔 (var なのでテストで上書き可能)。
+var gcInterval = 10 * time.Minute
+
+// gcDiscardRatio は RunValueLogGC に渡す破棄率の閾値 (BadgerDB公式ドキュメント推奨値)。
+const gcDiscardRatio = 0.5
+
+// RunGC は ctx がキャンセルされるまで gcInterval ごとに BadgerDB の
+// value log GC (RunValueLogGC) を実行し続けるブロッキングループ。
+// SaveViolations による同一キー上書きで無効化された古い value log
+// セグメントを回収しないとディスク使用量が単調増加し続けるため、
+// 長時間稼働する daemon モードから goroutine として起動することを想定する
+// (単発の `ingest` 実行では不要)。
+//
+// BadgerDB の一般的な運用パターンに従い、GC 1回で複数セグメントが
+// 回収可能な場合に備えて ErrNoRewrite が返るまで RunValueLogGC を
+// 連続実行する。ErrNoRewrite (回収対象なし) は正常終了として無視する。
+func (s *Store) RunGC(ctx context.Context, log *zap.Logger) {
+	if log == nil {
+		log = zap.NewNop()
+	}
+	ticker := time.NewTicker(gcInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			for {
+				err := s.db.RunValueLogGC(gcDiscardRatio)
+				if err == nil {
+					continue
+				}
+				if !errors.Is(err, badger.ErrNoRewrite) {
+					log.Warn("badger value log gc failed", zap.Error(err))
+				}
+				break
+			}
+		}
+	}
 }
 
 // key は violation の一意キーを組み立てる。
