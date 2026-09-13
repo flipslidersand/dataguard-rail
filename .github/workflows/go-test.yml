@@ -1,0 +1,17 @@
+name: Go Test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  go-ingestion:
+    uses: flipslidersand-labs/qa-workflows/.github/workflows/go-test.yml@main
+    with:
+      go-version: "1.24"
+      working-directory: go-ingestion
+      # internal/pb は protoc 生成コード（DO NOT EDIT）で go-test.yml には除外オプションが
+      # 無いため、これを含めた実測(2026-09-13) 46.7% に合わせて閾値を設定する。
+      coverage-threshold: 40
