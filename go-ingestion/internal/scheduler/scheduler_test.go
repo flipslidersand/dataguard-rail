@@ -98,7 +98,14 @@ func TestOverlappingJobIsSkipped(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	s.Start()
-	time.Sleep(2500 * time.Millisecond)
+
+	// 固定 sleep だと共有ランナーの負荷変動で tick が遅延した場合に
+	// 「starts が2未満のまま」偽陽性フレークする（#93と同種）。
+	// starts >= 2 になるまでポーリングし、十分なマージン（10秒）を持たせる。
+	deadline := time.Now().Add(10 * time.Second)
+	for starts.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
 	s.Stop()
 
 	if starts.Load() < 2 {
@@ -152,16 +159,29 @@ func TestStopTimesOutIfJobHangs(t *testing.T) {
 	blockCtx, unblock := context.WithCancel(context.Background())
 	defer unblock()
 
+	var started atomic.Bool
 	s := New(context.Background(), nil)
 	src := config.DataSource{Name: "x", Schedule: "@every 20ms"}
 	if err := s.Register(src, func(_ context.Context, _ config.DataSource) error {
+		started.Store(true)
 		<-blockCtx.Done() // Stop がタイムアウトするまで戻らない
 		return nil
 	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	s.Start()
-	time.Sleep(50 * time.Millisecond)
+
+	// 固定 sleep(50ms) だけでは、共有ランナーの負荷変動で tick が
+	// 50ms以内に発火しない場合ジョブが一度も開始されず、Stop()が即座に
+	// 返っても「意図した検証をしないまま偽陽性で成功」してしまう（#137）。
+	// ジョブが実際に開始したことをポーリングで確認してから Stop() を呼ぶ。
+	deadline := time.Now().Add(2 * time.Second)
+	for !started.Load() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !started.Load() {
+		t.Fatal("job never started within 2s")
+	}
 
 	start := time.Now()
 	s.Stop()
