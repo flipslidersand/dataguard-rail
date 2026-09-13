@@ -26,30 +26,89 @@ struct Args {
 #[derive(Subcommand)]
 enum Command {
     /// SQL ファイルからテーブルリネージュを生成する
+    #[command(
+        long_about = "SQL ファイル (または生の SQL 文字列) を解析し、テーブル間のリネージュ \
+(依存関係グラフ) を JSON で出力する。\n\n\
+--sql には .sql ファイルへのパス、または SQL 文そのものを渡せる。\
+拡張子が .sql なのにファイルが見つからない場合は、パスの誤りである可能性を警告しつつ、\
+その文字列自体を生の SQL として解析する。",
+        after_help = "EXAMPLES:\n\
+    # ファイルを解析して lineage.json に出力\n\
+    dataguard-engine analyze --sql queries/report.sql\n\n\
+    # 生の SQL 文字列を解析し、結果を標準出力へ\n\
+    dataguard-engine analyze --sql \"INSERT INTO t2 SELECT * FROM t1\" --out -"
+    )]
     Analyze {
+        /// 解析対象。.sql ファイルへのパス、または生の SQL 文字列。
         #[arg(long)]
         sql: String,
+        /// 出力先ファイルパス。"-" を指定すると標準出力に書き出す。
         #[arg(long, default_value = "lineage.json")]
         out: String,
     },
     /// CSV ファイルに品質ルールを適用して violations を出力する
+    #[command(
+        long_about = "CSV ファイルに --rules で指定したルール定義（JSON）を適用し、\
+違反した行・カラムを violations として JSON で出力する。",
+        after_help = "EXAMPLES:\n\
+    # data.csv に rules.json のルールを適用\n\
+    dataguard-engine check --input data.csv --rules rules.json\n\n\
+    # 出力先ファイル名を指定\n\
+    dataguard-engine check --input data.csv --rules rules.json --out violations.json"
+    )]
     Check {
+        /// 検査対象の CSV ファイルパス。
         #[arg(long)]
         input: String,
+        /// 適用する品質ルール定義（JSON）ファイルパス。
         #[arg(long)]
         rules: String,
+        /// 出力先ファイルパス。"-" を指定すると標準出力に書き出す。
         #[arg(long, default_value = "violations.json")]
         out: String,
     },
     /// CSV ファイルの各カラムを統計プロファイリングする
+    #[command(
+        long_about = "CSV ファイルの各カラムについて行数・null 数・型推定などの統計情報を \
+プロファイリングし、JSON で出力する。",
+        after_help = "EXAMPLES:\n\
+    # data.csv をプロファイリングして profile.json に出力\n\
+    dataguard-engine profile --input data.csv\n\n\
+    # 結果を標準出力へ\n\
+    dataguard-engine profile --input data.csv --out -"
+    )]
     Profile {
+        /// プロファイリング対象の CSV ファイルパス。
         #[arg(long)]
         input: String,
+        /// 出力先ファイルパス。"-" を指定すると標準出力に書き出す。
         #[arg(long, default_value = "profile.json")]
         out: String,
     },
     /// gRPC サーバーを起動する (Phase 5)
+    #[command(
+        long_about = "gRPC サーバーを起動する。\n\n\
+TLS/mTLS フラグの組み合わせルール:\n\
+  * --tls-cert と --tls-key は必ず併用する（片方だけの指定はエラー）。\n\
+  * 両方省略した場合は平文（TLS なし）で起動する。ただしループバック外の \
+--addr にバインドする場合は起動を拒否する（--insecure を指定しない限り）。\n\
+  * --tls-client-ca を追加すると、クライアント証明書の検証（mTLS）を要求する。\
+単独では使えず --tls-cert / --tls-key と併用する必要がある。\n\
+  * --insecure はループバック外への平文バインドを明示的に許可する（非推奨。\
+信頼できないネットワークに公開しないこと）。",
+        after_help = "EXAMPLES:\n\
+    # ループバックで平文起動（開発用）\n\
+    dataguard-engine serve --addr 127.0.0.1:50051\n\n\
+    # TLS で起動\n\
+    dataguard-engine serve --addr 0.0.0.0:50051 --tls-cert server.pem --tls-key server.key\n\n\
+    # mTLS（クライアント証明書検証つき）で起動\n\
+    dataguard-engine serve --addr 0.0.0.0:50051 \\\n\
+        --tls-cert server.pem --tls-key server.key --tls-client-ca client-ca.pem\n\n\
+    # ループバック外へ TLS なしで明示的に起動（非推奨）\n\
+    dataguard-engine serve --addr 0.0.0.0:50051 --insecure"
+    )]
     Serve {
+        /// バインド先アドレス。ループバック以外を指定する場合は TLS 設定か --insecure が必要。
         #[arg(long, default_value = "[::1]:50051")]
         addr: String,
         /// TLS サーバー証明書 (PEM)。--tls-key と併用。
@@ -59,6 +118,7 @@ enum Command {
         #[arg(long)]
         tls_key: Option<String>,
         /// クライアント証明書を検証する CA 証明書 (PEM)。指定時は mTLS を要求する。
+        /// --tls-cert / --tls-key と併用が必要。
         #[arg(long)]
         tls_client_ca: Option<String>,
         /// ループバック外でも TLS なし平文通信を明示的に許可する（非推奨）。
