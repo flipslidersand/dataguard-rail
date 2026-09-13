@@ -4,6 +4,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/flipslidersand/dataguard-rail/internal/alert"
@@ -47,15 +48,20 @@ func (DefaultLoader) Load(ctx context.Context, src config.DataSource) (*ingester
 	}
 }
 
-// Result はソースごとの取込み結果。
+// Result はソースごとの取込み結果。Err が非nilの場合、そのソースの処理は
+// 失敗しており Violations は 0 のまま意味を持たない。
 type Result struct {
 	Source     string
 	Violations int
 	Skipped    bool
 	Reason     string
+	Err        error
 }
 
 // Run は全 DataSource を順に処理し、ソースごとの結果を返す。
+// 1つのソースが失敗しても残りのソースの処理は継続し、失敗は各 Result.Err に
+// 記録した上で、全ソース処理後に errors.Join した複合エラーを返す
+// （呼び出し元は err != nil でも results を破棄せず先行成功分を利用できる）。
 func Run(ctx context.Context, cfg *config.Config, rulesPath, tmpDir string, loader Loader, chk Checker, saver Saver, notifier alert.Notifier, log *zap.Logger) ([]Result, error) {
 	if log == nil {
 		log = zap.NewNop()
@@ -67,11 +73,16 @@ func Run(ctx context.Context, cfg *config.Config, rulesPath, tmpDir string, load
 		notifier = alert.NoopNotifier{}
 	}
 	results := make([]Result, 0, len(cfg.Sources))
+	var errs []error
 
 	for _, src := range cfg.Sources {
 		n, err := process(ctx, src, rulesPath, tmpDir, loader, chk, saver)
 		if err != nil {
-			return results, fmt.Errorf("source %q: %w", src.Name, err)
+			wrapped := fmt.Errorf("source %q: %w", src.Name, err)
+			log.Error("ingest failed", zap.String("source", src.Name), zap.Error(err))
+			errs = append(errs, wrapped)
+			results = append(results, Result{Source: src.Name, Err: wrapped})
+			continue
 		}
 		log.Info("ingested", zap.String("source", src.Name), zap.String("type", string(src.Type)), zap.Int("violations", n))
 		telemetry.RecordIngest(ctx, src.Name, string(src.Type), int64(n))
@@ -82,7 +93,7 @@ func Run(ctx context.Context, cfg *config.Config, rulesPath, tmpDir string, load
 		}
 		results = append(results, Result{Source: src.Name, Violations: n})
 	}
-	return results, nil
+	return results, errors.Join(errs...)
 }
 
 // process は 1 ソースを読み込み→一時 CSV→チェック→保存し violation 数を返す。
